@@ -16,8 +16,8 @@ Globals:
       Variables:
         DB_HOST: !Ref DBHost
         DB_USER: !Ref DBUser
-        DB_PASSWORD: kYcwbOLpRKX1TpTMiAC6
-        DB_NAME: gestor_documental
+        DB_PASSWORD: !Ref DBPassword
+        DB_NAME: !Ref DBName
         SESSION_EXPIRY_MINUTES: 1440
   Api:
     TracingEnabled: true
