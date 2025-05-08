@@ -1,0 +1,604 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  document-manager-user-management
+ 
+  Sample SAM Template for document-manager-user-management
+ 
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 60
+    MemorySize: 128
+    Tracing: Active
+    Runtime: python3.9
+    Environment:
+      Variables:
+        DB_HOST: !Ref DBHost
+        DB_USER: !Ref DBUser
+        DB_PASSWORD: kYcwbOLpRKX1TpTMiAC6
+        DB_NAME: gestor_documental
+        SESSION_EXPIRY_MINUTES: 1440
+  Api:
+    TracingEnabled: true
+    # Configuración global de CORS para todas las APIs
+    Cors:
+      AllowMethods: "'GET, POST, PUT, DELETE, OPTIONS'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'*'"  # En producción, específica tus dominios en lugar de *
+      MaxAge: "'600'"
+ 
+Parameters:
+  DBHost:
+    Type: String
+    Default: fabrica-gestor-documental.c642nkfthejp.us-east-1.rds.amazonaws.com
+    Description: RDS Host Address
+  DBName:
+    Type: String
+    Default: fabrica-gestor-documental
+    Description: Database Name
+  DBUser:
+    Type: String
+    Default: admin
+    Description: Database Username
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Database Password
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the Lambda functions will run
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: First private subnet for Lambda functions
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Second private subnet for Lambda functions
+ 
+Resources:
+  # Definición del API Gateway con CORS habilitado
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'GET, POST, PUT, DELETE, OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: "'*'"  # En producción, específica tus dominios en lugar de *
+        MaxAge: "'600'"
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: auth.authentication.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Añadimos OPTIONS para cada ruta para manejar preflight requests
+        Login:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/login
+            Method: POST
+        Logout:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/logout
+            Method: POST
+        Register:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/register
+            Method: POST
+        Validate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/validate
+            Method: POST
+        Refresh:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/refresh
+            Method: POST
+        PasswordChange:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/change
+            Method: POST
+        RequestPasswordReset:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/reset/request
+            Method: POST
+        PasswordReset:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/reset/confirm
+            Method: POST
+        2faSetup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/setup
+            Method: POST
+        2faVerify:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/verify
+            Method: POST
+        2faLogin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/login
+            Method: POST
+  UserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: users.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+          GetUsers:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users
+              Method: GET
+          GetUser:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: GET
+          CreateUser:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users
+              Method: POST
+          UpdateUser:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: PUT
+          DeleteUser:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: DELETE
+          GetUserActivity:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/activity
+              Method: GET
+          GetActiveSessions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/sessions
+              Method: GET
+          DisableUser:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/disable
+              Method: PUT
+          ForcePasswordChange:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/force-password-change
+              Method: PUT
+          GetUserRoles:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles
+              Method: GET
+          AssignUserRoles:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles/assign
+              Method: POST
+          UpdateUserRoles:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles
+              Method: PUT
+          RemoveUserRoles:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles/remove
+              Method: DELETE
+          GetUserGroups:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups
+              Method: GET
+          AssignUserGroups:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups/assign
+              Method: POST
+          UpdateUserGroups:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups
+              Method: PUT
+          RemoveUserGroups:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups/remove
+              Method: POST
+          GetUserPermissions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/permissions
+              Method: GET
+  PermissionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: permissions.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Rutas de gestión de roles con OPTIONS para CORS
+        ListRoles:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles
+            Method: GET
+        GetRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: GET
+        CreateRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles
+            Method: POST
+        UpdateRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: PUT
+        DeleteRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: DELETE      
+        # Rutas de gestión de permisos con OPTIONS para CORS
+        ListPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions
+            Method: GET
+        GetPermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: GET
+        CreatePermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions
+            Method: POST
+        UpdatePermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: PUT
+        DeletePermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: DELETE       
+        # Rutas de gestión de roles-permisos con OPTIONS para CORS
+        GetRolePermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: GET
+        AssignPermissionsToRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: POST
+        RemovePermissionsFromRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: DELETE
+        CheckRolePermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions/{permission_id}
+            Method: GET     
+        # Rutas de gestión de permisos de usuario con OPTIONS para CORS
+        GetUserPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permission
+            Method: GET
+        CheckPermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permissions/{permission_code}
+            Method: GET
+  DocumentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: documents.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Document management routes con OPTIONS para CORS
+        ListDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents
+            Method: GET
+        GetDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: GET
+        CreateDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents
+            Method: POST
+        UpdateDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: PUT
+        DeleteDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: DELETE
+        # Document versions routes con OPTIONS para CORS
+        ListDocumentVersions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions
+            Method: GET
+        GetDocumentVersion:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions/{version_id}
+            Method: GET
+        CreateDocumentVersion:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions
+            Method: POST
+        # Document history route con OPTIONS para CORS
+        GetDocumentHistory:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/history
+            Method: GET
+  FolderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: folders.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Rutas de gestión de carpetas
+        ListFolders:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders
+            Method: GET
+        GetFolder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}
+            Method: GET
+        CreateFolder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders
+            Method: POST
+        UpdateFolder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}
+            Method: PUT
+        DeleteFolder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}
+            Method: DELETE
+        # Rutas de gestión de documentos en carpetas
+        ListFolderDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/documents
+            Method: GET
+        # Rutas de gestión de permisos de carpetas
+        GetFolderPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/permissions
+            Method: GET
+        SetFolderPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/permissions
+            Method: POST
+        RemoveFolderPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/permissions
+            Method: DELETE
+  ApplicationResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name:
+        Fn::Sub: ApplicationInsights-SAM-${AWS::StackName}
+      ResourceQuery:
+        Type: CLOUDFORMATION_STACK_1_0
+  ApplicationInsightsMonitoring:
+    Type: AWS::ApplicationInsights::Application
+    Properties:
+      ResourceGroupName:
+        Ref: ApplicationResourceGroup
+      AutoConfigurationEnabled: 'true'
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions to access RDS
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  ApiGatewayUrl:
+    Description: URL of the API Gateway
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+  AuthApi:
+    Description: API Gateway endpoint URL for Prod stage for Auth function
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/auth/"
+  AuthFunctionArn:
+    Description: Auth Lambda Function ARN
+    Value: !GetAtt AuthFunction.Arn
+  AuthFunctionIamRole:
+    Description: Implicit IAM Role created for Auth function
+    Value: !GetAtt AuthFunctionRole.Arn
+  # Add to existing Outputs section
+  PermissionsApi:
+    Description: API Gateway endpoint URL for Prod stage for Permissions function
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/roles/"
+  PermissionsFunctionArn:
+    Description: Permissions Lambda Function ARN
+    Value: !GetAtt PermissionsFunction.Arn
+  PermissionsFunctionIamRole:
+    Description: Implicit IAM Role created for Permissions function
+    Value: !GetAtt PermissionsFunctionRole.Arn
+  # Add new outputs for DocumentFunction
+  DocumentsApi:
+    Description: API Gateway endpoint URL for Prod stage for Document function
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/documents/"
+  DocumentFunctionArn:
+    Description: Document Lambda Function ARN
+    Value: !GetAtt DocumentFunction.Arn
+  DocumentFunctionIamRole:
+    Description: Implicit IAM Role created for Document function
+    Value: !GetAtt DocumentFunctionRole.Arn

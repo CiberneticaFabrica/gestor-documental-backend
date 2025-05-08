@@ -1,0 +1,26 @@
+version = 0.1
+ 
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "document-manager-user-management"
+region = "us-east-1"
+s3_bucket = "sam-gdb-artefactos"
+s3_prefix = "document-manager-user-management"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+disable_rollback = false
+image_repositories = []
+parameter_overrides = "DBHost=\"fabrica-gestor-documental.c642nkfthejp.us-east-1.rds.amazonaws.com\" DBName=\"gestor_documental\" DBUser=\"admin\" VpcId=\"vpc-06a3f85bdccd438be\" PrivateSubnet1=\"subnet-0e37829ca2504bbb9\" PrivateSubnet2=\"subnet-08fdbb3bb2b6a25f9\""
+
+
+[y.deploy.parameters]
+stack_name = "document-manager-user-management"
+resolve_s3 = true
+s3_prefix = "document-manager-user-management"
+region = "us-east-1"
+profile = "nuevo-usuario"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "DBHost=\"fabrica-gestor-documental.c642nkfthejp.us-east-1.rds.amazonaws.com\" DBName=\"gestor_documental\" DBUser=\"admin\" VpcId=\"vpc-06a3f85bdccd438be\" PrivateSubnet1=\"subnet-0e37829ca2504bbb9\" PrivateSubnet2=\"subnet-08fdbb3bb2b6a25f9\""
+image_repositories = []
