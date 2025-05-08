@@ -1142,7 +1142,7 @@ def get_folder_permissions(event, context):
     """Obtiene los permisos asignados a una carpeta"""
     try:
         # Validar sesión
-        user_id, error_response = validate_session(event, 'carpetas.ver_permisos')
+        user_id, error_response = validate_session(event, 'carpetas.permisos')
         if error_response:
             return error_response
         
@@ -1278,7 +1278,7 @@ def set_folder_permissions(event, context):
     """Configura permisos para una carpeta"""
     try:
         # Validar sesión
-        user_id, error_response = validate_session(event, 'carpetas.gestionar_permisos')
+        user_id, error_response = validate_session(event, 'carpetas.permisos')
         if error_response:
             return error_response
         
@@ -1506,7 +1506,7 @@ def remove_folder_permissions(event, context):
     """Elimina permisos de una carpeta"""
     try:
         # Validar sesión
-        user_id, error_response = validate_session(event, 'carpetas.gestionar_permisos')
+        user_id, error_response = validate_session(event, 'carpetas.permisos')
         if error_response:
             return error_response
         
