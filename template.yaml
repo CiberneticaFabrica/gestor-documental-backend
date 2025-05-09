@@ -84,67 +84,133 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
       Events:
-        # Añadimos OPTIONS para cada ruta para manejar preflight requests
+        # Manejamos OPTIONS para cada ruta para CORS preflight
+        LoginOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/login
+            Method: OPTIONS
         Login:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/login
             Method: POST
+        LogoutOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/logout
+            Method: OPTIONS
         Logout:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/logout
             Method: POST
+        RegisterOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/register
+            Method: OPTIONS
         Register:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/register
             Method: POST
+        ValidateOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/validate
+            Method: OPTIONS
         Validate:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/validate
             Method: POST
+        RefreshOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/refresh
+            Method: OPTIONS
         Refresh:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/refresh
             Method: POST
+        PasswordChangeOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/change
+            Method: OPTIONS
         PasswordChange:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/password/change
             Method: POST
+        RequestPasswordResetOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/reset/request
+            Method: OPTIONS
         RequestPasswordReset:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/password/reset/request
             Method: POST
+        PasswordResetOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/password/reset/confirm
+            Method: OPTIONS
         PasswordReset:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/password/reset/confirm
             Method: POST
+        2faSetupOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/setup
+            Method: OPTIONS
         2faSetup:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/2fa/setup
             Method: POST
+        2faVerifyOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/verify
+            Method: OPTIONS
         2faVerify:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /auth/2fa/verify
             Method: POST
+        2faLoginOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/2fa/login
+            Method: OPTIONS
         2faLogin:
           Type: Api
           Properties:

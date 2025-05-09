@@ -25,6 +25,14 @@ def lambda_handler(event, context):
         http_method = event['httpMethod']
         path = event['path']
         
+        # Manejar solicitudes OPTIONS para CORS preflight
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers(),
+                'body': ''
+            }
+        
         # Rutas de autenticación
         if http_method == 'POST' and path == '/auth/login':
             return login(event, context)
@@ -60,6 +68,7 @@ def lambda_handler(event, context):
         logger.error(f"Error en despachador principal: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})
         }
 
@@ -103,6 +112,7 @@ def login(event, context):
         if 'password' not in body or ('email' not in body and 'username' not in body):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requieren nombre de usuario o email, y contraseña'})
             }
         
@@ -139,6 +149,7 @@ def login(event, context):
             
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Credenciales inválidas'})
             }
         
@@ -163,6 +174,7 @@ def login(event, context):
             
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario inactivo'})
             }
         
@@ -184,6 +196,7 @@ def login(event, context):
             
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Credenciales inválidas'})
             }
         
@@ -298,6 +311,7 @@ def login(event, context):
         logger.error(f"Error en inicio de sesión: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error en inicio de sesión: {str(e)}'})
         }
 
@@ -311,6 +325,7 @@ def logout(event, context):
         if not auth_header.startswith('Bearer '):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token no proporcionado'})
             }
         
@@ -331,6 +346,7 @@ def logout(event, context):
         if not session_result or not session_result[0]['activa']:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión inválida o ya cerrada'})
             }
         
@@ -360,7 +376,6 @@ def logout(event, context):
             'resultado': 'éxito'
         }
         
-        #
         insert_audit_record(audit_data)
         
         # Retornar respuesta exitosa
@@ -376,6 +391,7 @@ def logout(event, context):
         logger.error(f"Error al cerrar sesión: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al cerrar sesión: {str(e)}'})
         }
 
@@ -388,6 +404,7 @@ def create_user(event, context):
         if not all(field in body for field in required_fields):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Faltan campos requeridos'})
             }
 
@@ -400,6 +417,7 @@ def create_user(event, context):
         if existing:
             return {
                 'statusCode': 409,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario o correo ya registrado'})
             }
 
@@ -488,6 +506,7 @@ def create_user(event, context):
         logger.error(f"Error al crear usuario: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al crear usuario: {str(e)}'})
         }
 
@@ -501,6 +520,7 @@ def validate_session(event, context):
         if not auth_header.startswith('Bearer '):
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token no proporcionado'})
             }
         
@@ -523,6 +543,7 @@ def validate_session(event, context):
         if not session_result:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión no encontrada'})
             }
         
@@ -533,6 +554,7 @@ def validate_session(event, context):
         if not session['activa']:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión inactiva'})
             }
         
@@ -565,11 +587,12 @@ def validate_session(event, context):
                 'resultado': 'expirada'
             }
             
-            # # Insertar registro de auditoría
+            # Insertar registro de auditoría
             insert_audit_record(audit_data)
             
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión expirada'})
             }
         
@@ -602,6 +625,7 @@ def validate_session(event, context):
             
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario inactivo'})
             }
         
@@ -676,9 +700,10 @@ def validate_session(event, context):
         logger.error(f"Error al validar sesión: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al validar sesión: {str(e)}'})
         }
-
+    
 def refresh_token(event, context):
     """Renueva un token de sesión existente"""
     try:
@@ -689,6 +714,7 @@ def refresh_token(event, context):
         if 'session_token' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token de sesión no proporcionado'})
             }
         
@@ -711,6 +737,7 @@ def refresh_token(event, context):
         if not session_result:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión no encontrada o inactiva'})
             }
         
@@ -721,6 +748,7 @@ def refresh_token(event, context):
         if session['estado'] != 'activo':
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario inactivo'})
             }
         
@@ -839,6 +867,7 @@ def refresh_token(event, context):
         logger.error(f"Error al renovar token: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al renovar token: {str(e)}'})
         }
 
@@ -852,6 +881,7 @@ def change_password(event, context):
         if not auth_header.startswith('Bearer '):
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token no proporcionado'})
             }
         
@@ -874,6 +904,7 @@ def change_password(event, context):
         if not session_result or not session_result[0]['activa']:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión inválida o inactiva'})
             }
         
@@ -887,6 +918,7 @@ def change_password(event, context):
         if 'current_password' not in body or 'new_password' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requieren contraseña actual y nueva'})
             }
         
@@ -912,6 +944,7 @@ def change_password(event, context):
             
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Contraseña actual incorrecta'})
             }
         
@@ -919,6 +952,7 @@ def change_password(event, context):
         if len(new_password) < 8:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'La nueva contraseña debe tener al menos 8 caracteres'})
             }
         
@@ -979,9 +1013,10 @@ def change_password(event, context):
         logger.error(f"Error al cambiar contraseña: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al cambiar contraseña: {str(e)}'})
         }
-
+    
 def request_password_reset(event, context):
     """Solicita un código de recuperación de contraseña"""
     try:
@@ -992,6 +1027,7 @@ def request_password_reset(event, context):
         if 'identifier' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requiere email o nombre de usuario'})
             }
         
@@ -1012,6 +1048,7 @@ def request_password_reset(event, context):
         if not user_result or user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Si el email o usuario existe en nuestro sistema, recibirás un correo con instrucciones para restablecer tu contraseña'
                 })
@@ -1074,6 +1111,7 @@ def request_password_reset(event, context):
         logger.error(f"Error en solicitud de recuperación: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error en el proceso de recuperación: {str(e)}'})
         }
 
@@ -1087,6 +1125,7 @@ def reset_password(event, context):
         if 'identifier' not in body or 'reset_code' not in body or 'new_password' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requieren identificador, código y nueva contraseña'})
             }
         
@@ -1099,6 +1138,7 @@ def reset_password(event, context):
         if len(new_password) < 8:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'La nueva contraseña debe tener al menos 8 caracteres'})
             }
         
@@ -1116,6 +1156,7 @@ def reset_password(event, context):
         if not user_result:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario no encontrado o inactivo'})
             }
         
@@ -1138,6 +1179,7 @@ def reset_password(event, context):
         if not reset_result:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Código de recuperación inválido'})
             }
         
@@ -1148,6 +1190,7 @@ def reset_password(event, context):
         if reset['utilizado']:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El código ya ha sido utilizado'})
             }
         
@@ -1155,6 +1198,7 @@ def reset_password(event, context):
         if reset['fecha_expiracion'] < datetime.datetime.now():
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El código ha expirado'})
             }
         
@@ -1235,9 +1279,10 @@ def reset_password(event, context):
         logger.error(f"Error en restablecimiento de contraseña: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error en restablecimiento de contraseña: {str(e)}'})
         }
-
+    
 def setup_2fa(event, context):
     """Configura la autenticación de dos factores para un usuario"""
     try:
@@ -1247,6 +1292,7 @@ def setup_2fa(event, context):
         if not auth_header.startswith('Bearer '):
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token no proporcionado'})
             }
         
@@ -1265,6 +1311,7 @@ def setup_2fa(event, context):
         if not session_result:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Sesión inválida o inactiva'})
             }
         
@@ -1336,6 +1383,7 @@ def setup_2fa(event, context):
         logger.error(f"Error al configurar 2FA: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al configurar 2FA: {str(e)}'})
         }
 
@@ -1349,6 +1397,7 @@ def verify_2fa(event, context):
         if 'temp_token' not in body or '2fa_code' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requieren token temporal y código 2FA'})
             }
         
@@ -1369,6 +1418,7 @@ def verify_2fa(event, context):
         if not token_result:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token temporal inválido o caducado'})
             }
         
@@ -1378,6 +1428,7 @@ def verify_2fa(event, context):
         if token['usado']:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token ya utilizado'})
             }
         
@@ -1385,6 +1436,7 @@ def verify_2fa(event, context):
         if token['fecha_expiracion'] < datetime.datetime.now():
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Token expirado'})
             }
         
@@ -1393,6 +1445,7 @@ def verify_2fa(event, context):
         if not code.isdigit() or len(code) != 6:
             return {
                 'statusCode': 401,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Código 2FA inválido'})
             }
         
@@ -1521,13 +1574,16 @@ def verify_2fa(event, context):
         logger.error(f"Error en verificación 2FA: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error en verificación 2FA: {str(e)}'})
         }
 
 def login_with_2fa(event, context):
+    """Maneja el login con autenticación de dos factores"""
     try:
         return {
             'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({
                 'message': 'Verificación 2FA exitosa'
             }, default=str)
@@ -1536,5 +1592,6 @@ def login_with_2fa(event, context):
         logger.error(f"Error en verificación 2FA: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error en verificación 2FA: {str(e)}'})
         }
