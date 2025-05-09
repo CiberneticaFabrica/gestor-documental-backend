@@ -233,109 +233,217 @@ Resources:
         SubnetIds:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
-      Events:
+      Events:    
+          GetUsersOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users
+              Method: OPTIONS
           GetUsers:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users
               Method: GET
+          GetUserOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: OPTIONS
           GetUser:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}
               Method: GET
+          CreateUserOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users
+              Method: OPTIONS
           CreateUser:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users
               Method: POST
+          UpdateUserOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: OPTIONS
           UpdateUser:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}
               Method: PUT
+          DeleteUserOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}
+              Method: OPTIONS
           DeleteUser:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}
               Method: DELETE
+          GetUserActivityOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/activity
+              Method: OPTIONS
           GetUserActivity:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/activity
               Method: GET
+          GetActiveSessionsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/sessions
+              Method: OPTIONS
           GetActiveSessions:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/sessions
               Method: GET
+          DisableUserOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/disable
+              Method: OPTIONS
           DisableUser:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/disable
               Method: PUT
+          ForcePasswordChangeOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/force-password-change
+              Method: OPTIONS
           ForcePasswordChange:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/force-password-change
               Method: PUT
+          GetUserRolesOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles
+              Method: OPTIONS  
           GetUserRoles:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/roles
-              Method: GET
+              Method: GET  
+          AssignUserRolesOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles/assign
+              Method: OPTIONS
           AssignUserRoles:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/roles/assign
               Method: POST
+          UpdateUserRolesOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles
+              Method: OPTIONS
           UpdateUserRoles:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/roles
               Method: PUT
+          RemoveUserRolesOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/roles/remove
+              Method: OPTIONS
           RemoveUserRoles:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/roles/remove
               Method: DELETE
+          GetUserGroupsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups
+              Method: OPTIONS
           GetUserGroups:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/groups
               Method: GET
+          AssignUserGroupsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups/assign
+              Method: OPTIONS
           AssignUserGroups:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/groups/assign
               Method: POST
+          UpdateUserGroupsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups
+              Method: OPTIONS
           UpdateUserGroups:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/groups
-              Method: PUT
+              Method: PUT 
+          RemoveUserGroupsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/groups/remove
+              Method: OPTIONS
           RemoveUserGroups:
             Type: Api
             Properties:
               RestApiId: !Ref ApiGateway
               Path: /users/{id}/groups/remove
               Method: POST
+          GetUserPermissionsOptions:
+            Type: Api
+            Properties:
+              RestApiId: !Ref ApiGateway
+              Path: /users/{id}/permissions
+              Method: OPTIONS
           GetUserPermissions:
             Type: Api
             Properties:
@@ -359,100 +467,196 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
       Events:
-        # Rutas de gestión de roles con OPTIONS para CORS
+        # Rutas de gestión de roles
+        ListRolesOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles
+            Method: OPTIONS
         ListRoles:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles
             Method: GET
+        GetRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: OPTIONS
         GetRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
             Method: GET
+        CreateRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles
+            Method: OPTIONS
         CreateRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles
             Method: POST
+        UpdateRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: OPTIONS
         UpdateRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
             Method: PUT
+        DeleteRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}
+            Method: OPTIONS
         DeleteRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
-            Method: DELETE      
-        # Rutas de gestión de permisos con OPTIONS para CORS
+            Method: DELETE 
+        # Rutas de gestión de permisos
+        ListPermissionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions
+            Method: OPTIONS
         ListPermissions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions
             Method: GET
+        GetPermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: OPTIONS
         GetPermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
             Method: GET
+        CreatePermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions
+            Method: OPTIONS
         CreatePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions
             Method: POST
+        UpdatePermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: OPTIONS
         UpdatePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
             Method: PUT
+        DeletePermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions/{id}
+            Method: OPTIONS
         DeletePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
-            Method: DELETE       
-        # Rutas de gestión de roles-permisos con OPTIONS para CORS
+            Method: DELETE
+        # Rutas de gestión de roles-permisos
+        GetRolePermissionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: OPTIONS
         GetRolePermissions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: GET
+        AssignPermissionsToRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: OPTIONS
         AssignPermissionsToRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: POST
+        RemovePermissionsFromRoleOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions
+            Method: OPTIONS
         RemovePermissionsFromRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: DELETE
+        CheckRolePermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles/{id}/permissions/{permission_id}
+            Method: OPTIONS
         CheckRolePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions/{permission_id}
             Method: GET     
-        # Rutas de gestión de permisos de usuario con OPTIONS para CORS
+        # Rutas de gestión de permisos de usuario
+        GetUserPermissionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permission
+            Method: OPTIONS
         GetUserPermissions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /users/{id}/permission
             Method: GET
+        CheckPermissionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permissions/{permission_code}
+            Method: OPTIONS
         CheckPermission:
           Type: Api
           Properties:

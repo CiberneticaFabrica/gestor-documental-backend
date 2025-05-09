@@ -24,6 +24,14 @@ def lambda_handler(event, context):
     try:
         http_method = event['httpMethod']
         path = event['path']
+
+        # Manejar solicitudes OPTIONS para CORS preflight
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers(),
+                'body': ''
+            }
         
         # Extract path parameters if they exist
         path_params = event.get('pathParameters', {}) or {}
@@ -106,6 +114,7 @@ def lambda_handler(event, context):
         logger.error(f"Error in main dispatcher: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Internal server error: {str(e)}'})
         }
 
@@ -114,7 +123,7 @@ def verify_session_and_permissions(event, required_permission=None):
     auth_header = event.get('headers', {}).get('Authorization', '')
     
     if not auth_header.startswith('Bearer '):
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Token not provided'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Token not provided'})}
     
     session_token = auth_header.split(' ')[1]
     
@@ -129,18 +138,18 @@ def verify_session_and_permissions(event, required_permission=None):
     session_result = execute_query(check_query, (session_token,))
     
     if not session_result:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Invalid session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Invalid session'})}
     
     session = session_result[0]
     
     if not session['activa']:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive session'})}
     
     if session['fecha_expiracion'] < datetime.datetime.now():
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Expired session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Expired session'})}
     
     if session['estado'] != 'activo':
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive user'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive user'})}
     
     user_id = session['id_usuario']
     
@@ -160,7 +169,7 @@ def verify_session_and_permissions(event, required_permission=None):
     perm_result = execute_query(perm_query, (user_id, required_permission))
     
     if not perm_result or perm_result[0]['has_permission'] == 0:
-        return user_id, {'statusCode': 403, 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
+        return user_id, {'statusCode': 403, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
     
     return user_id, None
 
@@ -272,6 +281,7 @@ def list_users(event, context):
         logger.error(f"Error listing users: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error listing users: {str(e)}'})
         }
 
@@ -305,6 +315,7 @@ def get_user(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -347,6 +358,7 @@ def get_user(event, context):
         logger.error(f"Error getting user: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting user: {str(e)}'})
         }
 
@@ -367,6 +379,7 @@ def create_user(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Missing required field: {field}'})
                 }
         
@@ -384,11 +397,13 @@ def create_user(event, context):
                 if user['nombre_usuario'] == body['nombre_usuario']:
                     return {
                         'statusCode': 400,
+                        'headers': add_cors_headers({'Content-Type': 'application/json'}),
                         'body': json.dumps({'error': 'Username is already in use'})
                     }
                 if user['email'] == body['email']:
                     return {
                         'statusCode': 400,
+                        'headers': add_cors_headers({'Content-Type': 'application/json'}),
                         'body': json.dumps({'error': 'Email is already in use'})
                     }
         
@@ -498,6 +513,7 @@ def create_user(event, context):
         logger.error(f"Error creating user: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error creating user: {str(e)}'})
         }
 
@@ -533,6 +549,7 @@ def update_user(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -562,11 +579,13 @@ def update_user(event, context):
                     if existing_user['nombre_usuario'] == new_username:
                         return {
                             'statusCode': 400,
+                            'headers': add_cors_headers({'Content-Type': 'application/json'}),
                             'body': json.dumps({'error': 'Username is already in use'})
                         }
                     if existing_user['email'] == new_email:
                         return {
                             'statusCode': 400,
+                            'headers': add_cors_headers({'Content-Type': 'application/json'}),
                             'body': json.dumps({'error': 'Email is already in use'})
                         }
         
@@ -601,6 +620,7 @@ def update_user(event, context):
         if not update_fields:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No fields to update'})
             }
         
@@ -642,6 +662,7 @@ def update_user(event, context):
         logger.error(f"Error updating user: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error updating user: {str(e)}'})
         }
 
@@ -660,6 +681,7 @@ def delete_user(event, context):
         if user_id == admin_id:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'You cannot delete your own account'})
             }
         
@@ -675,6 +697,7 @@ def delete_user(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -684,6 +707,7 @@ def delete_user(event, context):
         if user['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User is already inactive'})
             }
         
@@ -739,6 +763,7 @@ def delete_user(event, context):
         logger.error(f"Error deleting user: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error deleting user: {str(e)}'})
         }
 
@@ -857,6 +882,7 @@ def get_user_activity(event, context):
         logger.error(f"Error getting user activity: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting user activity: {str(e)}'})
         }
 
@@ -935,6 +961,7 @@ def get_active_sessions(event, context):
         logger.error(f"Error getting active sessions: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting active sessions: {str(e)}'})
         }
 
@@ -961,12 +988,14 @@ def update_user_roles(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Cannot modify roles for an inactive user'})
             }
         
@@ -976,6 +1005,7 @@ def update_user_roles(event, context):
         if 'roles' not in body or not isinstance(body['roles'], list):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'A list of roles is required'})
             }
         
@@ -996,6 +1026,7 @@ def update_user_roles(event, context):
             invalid_roles = [r for r in new_roles if r not in found_roles]
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': f'Invalid roles: {invalid_roles}'})
             }
         
@@ -1066,6 +1097,7 @@ def update_user_roles(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Roles updated successfully',
                     'previous_roles': current_roles,
@@ -1082,6 +1114,7 @@ def update_user_roles(event, context):
         logger.error(f"Error updating roles: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error updating roles: {str(e)}'})
         }
 
@@ -1100,6 +1133,7 @@ def disable_user(event, context):
         if user_id == admin_id:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'You cannot disable your own account'})
             }
         
@@ -1115,12 +1149,14 @@ def disable_user(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User is already disabled'})
             }
         
@@ -1172,6 +1208,7 @@ def disable_user(event, context):
         logger.error(f"Error disabling user: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error disabling user: {str(e)}'})
         }
 
@@ -1198,12 +1235,14 @@ def force_password_change(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Cannot force password change for an inactive user'})
             }
         
@@ -1246,6 +1285,7 @@ def force_password_change(event, context):
         logger.error(f"Error forcing password change: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error forcing password change: {str(e)}'})
         }
 
@@ -1278,6 +1318,7 @@ def get_user_roles(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -1307,6 +1348,7 @@ def get_user_roles(event, context):
         logger.error(f"Error getting user roles: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting user roles: {str(e)}'})
         }
 
@@ -1333,12 +1375,14 @@ def assign_user_roles(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Cannot assign roles to an inactive user'})
             }
         
@@ -1348,6 +1392,7 @@ def assign_user_roles(event, context):
         if 'roles' not in body or not isinstance(body['roles'], list) or len(body['roles']) == 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'A non-empty list of roles is required'})
             }
         
@@ -1368,6 +1413,7 @@ def assign_user_roles(event, context):
             invalid_roles = [r for r in roles_to_assign if r not in found_roles]
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': f'Invalid roles: {invalid_roles}'})
             }
         
@@ -1387,6 +1433,7 @@ def assign_user_roles(event, context):
         if not roles_to_add:
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'All roles already assigned to user',
                     'user_id': user_id
@@ -1435,6 +1482,7 @@ def assign_user_roles(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Roles assigned successfully',
                     'user_id': user_id,
@@ -1451,6 +1499,7 @@ def assign_user_roles(event, context):
         logger.error(f"Error assigning user roles: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error assigning user roles: {str(e)}'})
         }
 
@@ -1477,6 +1526,7 @@ def remove_user_roles(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -1486,6 +1536,7 @@ def remove_user_roles(event, context):
         if 'roles' not in body or not isinstance(body['roles'], list) or len(body['roles']) == 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'A non-empty list of roles is required'})
             }
         
@@ -1505,6 +1556,7 @@ def remove_user_roles(event, context):
             not_assigned_roles = [r for r in roles_to_remove if r not in current_roles]
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': f'Some roles are not assigned to the user: {not_assigned_roles}'})
             }
         
@@ -1550,6 +1602,7 @@ def remove_user_roles(event, context):
         logger.error(f"Error removing user roles: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error removing user roles: {str(e)}'})
         }
 
@@ -1582,6 +1635,7 @@ def get_user_groups(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -1617,6 +1671,7 @@ def get_user_groups(event, context):
         logger.error(f"Error getting user groups: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting user groups: {str(e)}'})
         }
 
@@ -1643,12 +1698,14 @@ def assign_user_groups(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Cannot assign groups to an inactive user'})
             }
         
@@ -1658,6 +1715,7 @@ def assign_user_groups(event, context):
         if 'groups' not in body or not isinstance(body['groups'], list) or len(body['groups']) == 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'A non-empty list of groups is required'})
             }
         
@@ -1678,6 +1736,7 @@ def assign_user_groups(event, context):
             invalid_groups = [g for g in groups_to_assign if g not in found_groups]
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': f'Invalid groups: {invalid_groups}'})
             }
         
@@ -1697,6 +1756,7 @@ def assign_user_groups(event, context):
         if not groups_to_add:
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'All groups already assigned to user',
                     'user_id': user_id
@@ -1740,6 +1800,7 @@ def assign_user_groups(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Groups assigned successfully',
                     'user_id': user_id,
@@ -1756,6 +1817,7 @@ def assign_user_groups(event, context):
         logger.error(f"Error assigning user groups: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error assigning user groups: {str(e)}'})
         }
 
@@ -1782,6 +1844,7 @@ def remove_user_groups(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -1791,6 +1854,7 @@ def remove_user_groups(event, context):
         if 'groups' not in body or not isinstance(body['groups'], list) or len(body['groups']) == 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'A non-empty list of groups is required'})
             }
         
@@ -1810,6 +1874,7 @@ def remove_user_groups(event, context):
             not_assigned_groups = [g for g in groups_to_remove if g not in current_groups]
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': f'Some groups are not assigned to the user: {not_assigned_groups}'})
             }
         
@@ -1855,6 +1920,7 @@ def remove_user_groups(event, context):
         logger.error(f"Error removing user groups: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error removing user groups: {str(e)}'})
         }
 
@@ -1887,6 +1953,7 @@ def get_user_permissions(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'User not found'})
             }
         
@@ -1954,5 +2021,6 @@ def get_user_permissions(event, context):
         logger.error(f"Error getting user permissions: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting user permissions: {str(e)}'})
         }

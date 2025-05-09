@@ -23,6 +23,14 @@ def lambda_handler(event, context):
     try:
         http_method = event['httpMethod']
         path = event['path']
+
+        # Manejar solicitudes OPTIONS para CORS preflight
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers(),
+                'body': ''
+            }
         
         # Document management routes
         if http_method == 'GET' and path == '/documents':
@@ -75,6 +83,7 @@ def lambda_handler(event, context):
         logger.error(f"Error in main handler: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Internal server error: {str(e)}'})
         }
 
@@ -83,7 +92,7 @@ def validate_session(event, required_permission=None):
     auth_header = event.get('headers', {}).get('Authorization', '')
     
     if not auth_header.startswith('Bearer '):
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Token not provided'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Token not provided'})}
     
     session_token = auth_header.split(' ')[1]
     
@@ -98,18 +107,18 @@ def validate_session(event, required_permission=None):
     session_result = execute_query(check_query, (session_token,))
     
     if not session_result:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Invalid session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Invalid session'})}
     
     session = session_result[0]
     
     if not session['activa']:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive session'})}
     
     if session['fecha_expiracion'] < datetime.datetime.now():
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Expired session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Expired session'})}
     
     if session['estado'] != 'activo':
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive user'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive user'})}
     
     user_id = session['id_usuario']
     
@@ -129,7 +138,7 @@ def validate_session(event, required_permission=None):
     perm_result = execute_query(perm_query, (user_id, required_permission))
     
     if not perm_result or perm_result[0]['has_permission'] == 0:
-        return user_id, {'statusCode': 403, 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
+        return user_id, {'statusCode': 403, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
     
     return user_id, None
 
@@ -285,6 +294,7 @@ def list_documents(event, context):
         logger.error(f"Error listing documents: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error listing documents: {str(e)}'})
         }
 
@@ -331,6 +341,7 @@ def get_document(event, context):
         if not results:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found'})
             }
         
@@ -357,6 +368,7 @@ def get_document(event, context):
             if not folder_access or folder_access[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to access this document'})
                 }
         
@@ -445,6 +457,7 @@ def get_document(event, context):
         logger.error(f"Error getting document: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document: {str(e)}'})
         }
 
@@ -465,6 +478,7 @@ def create_document(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Missing required field: {field}'})
                 }
         
@@ -492,6 +506,7 @@ def create_document(event, context):
             if not folder_result:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Invalid folder ID'})
                 }
             
@@ -513,6 +528,7 @@ def create_document(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have write permission for this folder'})
                 }
         
@@ -527,6 +543,7 @@ def create_document(event, context):
         if not type_result:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Invalid document type'})
             }
         
@@ -605,6 +622,7 @@ def create_document(event, context):
         logger.error(f"Error creating document: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error creating document: {str(e)}'})
         }
 
@@ -633,6 +651,7 @@ def update_document(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or already deleted'})
             }
         
@@ -658,6 +677,7 @@ def update_document(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to edit this document'})
                 }
         
@@ -689,6 +709,7 @@ def update_document(event, context):
             if not folder_result:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Invalid folder ID'})
                 }
             
@@ -710,6 +731,7 @@ def update_document(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have write permission for the target folder'})
                 }
         
@@ -719,6 +741,7 @@ def update_document(event, context):
             if body['estado'] not in valid_statuses:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'})
                 }
         
@@ -738,6 +761,7 @@ def update_document(event, context):
         if not fields_to_update:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No fields to update'})
             }
         
@@ -787,6 +811,7 @@ def update_document(event, context):
         logger.error(f"Error updating document: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error updating document: {str(e)}'})
         }
 
@@ -812,6 +837,7 @@ def delete_document(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or already deleted'})
             }
         
@@ -837,6 +863,7 @@ def delete_document(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to delete this document'})
                 }
         
@@ -882,6 +909,7 @@ def delete_document(event, context):
         logger.error(f"Error deleting document: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error deleting document: {str(e)}'})
         }
 
@@ -907,6 +935,7 @@ def list_document_versions(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or deleted'})
             }
         
@@ -932,6 +961,7 @@ def list_document_versions(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to view this document'})
                 }
         
@@ -996,6 +1026,7 @@ def list_document_versions(event, context):
         logger.error(f"Error listing document versions: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error listing document versions: {str(e)}'})
         }
 
@@ -1022,6 +1053,7 @@ def get_document_version(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or deleted'})
             }
         
@@ -1047,6 +1079,7 @@ def get_document_version(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to view this document'})
                 }
         
@@ -1069,6 +1102,7 @@ def get_document_version(event, context):
         if not version_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Version not found'})
             }
         
@@ -1125,6 +1159,7 @@ def get_document_version(event, context):
         logger.error(f"Error getting document version: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document version: {str(e)}'})
         }
 
@@ -1150,6 +1185,7 @@ def create_document_version(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or deleted'})
             }
         
@@ -1175,6 +1211,7 @@ def create_document_version(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to edit this document'})
                 }
         
@@ -1195,6 +1232,7 @@ def create_document_version(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Missing required field: {field}'})
                 }
         
@@ -1287,6 +1325,7 @@ def create_document_version(event, context):
         logger.error(f"Error creating document version: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error creating document version: {str(e)}'})
         }
 
@@ -1312,6 +1351,7 @@ def get_document_history(event, context):
         if not doc_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Document not found or deleted'})
             }
         
@@ -1337,6 +1377,7 @@ def get_document_history(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'You do not have permission to view this document'})
                 }
         
@@ -1415,6 +1456,7 @@ def get_document_history(event, context):
         logger.error(f"Error getting document history: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document history: {str(e)}'})
         }
 

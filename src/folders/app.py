@@ -22,6 +22,14 @@ def lambda_handler(event, context):
     try:
         http_method = event['httpMethod']
         path = event['path']
+
+        # Manejar solicitudes OPTIONS para CORS preflight
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers(),
+                'body': ''
+            }
         
         # Rutas de gestión de carpetas
         if http_method == 'GET' and path == '/folders':
@@ -68,6 +76,7 @@ def lambda_handler(event, context):
         logger.error(f"Error en despachador principal: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})
         }
 
@@ -76,7 +85,7 @@ def validate_session(event, required_permission=None):
     auth_header = event.get('headers', {}).get('Authorization', '')
     
     if not auth_header.startswith('Bearer '):
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Token no proporcionado'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Token no proporcionado'})}
     
     session_token = auth_header.split(' ')[1]
     
@@ -91,18 +100,18 @@ def validate_session(event, required_permission=None):
     session_result = execute_query(check_query, (session_token,))
     
     if not session_result:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Sesión inválida'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Sesión inválida'})}
     
     session = session_result[0]
     
     if not session['activa']:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Sesión inactiva'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Sesión inactiva'})}
     
     if session['fecha_expiracion'] < datetime.datetime.now():
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Sesión expirada'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Sesión expirada'})}
     
     if session['estado'] != 'activo':
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Usuario inactivo'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Usuario inactivo'})}
     
     user_id = session['id_usuario']
     
@@ -122,7 +131,7 @@ def validate_session(event, required_permission=None):
     perm_result = execute_query(perm_query, (user_id, required_permission))
     
     if not perm_result or perm_result[0]['has_permission'] == 0:
-        return user_id, {'statusCode': 403, 'body': json.dumps({'error': f'No tiene el permiso requerido: {required_permission}'})}
+        return user_id, {'statusCode': 403, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': f'No tiene el permiso requerido: {required_permission}'})}
     
     return user_id, None
 
@@ -266,6 +275,7 @@ def list_folders(event, context):
         logger.error(f"Error al listar carpetas: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar carpetas: {str(e)}'})
         }
 
@@ -292,6 +302,7 @@ def list_folder_documents(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -317,6 +328,7 @@ def list_folder_documents(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'No tiene permisos para acceder a esta carpeta'})
                 }
         
@@ -429,6 +441,7 @@ def list_folder_documents(event, context):
         logger.error(f"Error al listar documentos de carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar documentos de carpeta: {str(e)}'})
         }
 
@@ -460,6 +473,7 @@ def get_folder(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -485,6 +499,7 @@ def get_folder(event, context):
             if not access_result or access_result[0]['has_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'No tiene permisos para acceder a esta carpeta'})
                 }
         
@@ -552,6 +567,7 @@ def get_folder(event, context):
         logger.error(f"Error al obtener carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener carpeta: {str(e)}'})
         }
 
@@ -570,6 +586,7 @@ def create_folder(event, context):
         if 'nombre_carpeta' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El nombre de la carpeta es requerido'})
             }
         
@@ -582,6 +599,7 @@ def create_folder(event, context):
         if '/' in nombre_carpeta or '\\' in nombre_carpeta:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El nombre de la carpeta no puede contener los caracteres / o \\'})
             }
         
@@ -597,6 +615,7 @@ def create_folder(event, context):
             if not parent_result:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'La carpeta padre no existe'})
                 }
             
@@ -622,6 +641,7 @@ def create_folder(event, context):
                 if not access_result or access_result[0]['has_write_access'] == 0:
                     return {
                         'statusCode': 403,
+                        'headers': add_cors_headers({'Content-Type': 'application/json'}),
                         'body': json.dumps({'error': 'No tiene permisos para crear carpetas en esta ubicación'})
                     }
             
@@ -636,6 +656,7 @@ def create_folder(event, context):
             if check_result[0]['count'] > 0:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Ya existe una carpeta con ese nombre en esta ubicación'})
                 }
             
@@ -656,6 +677,7 @@ def create_folder(event, context):
             if not root_perm_result or root_perm_result[0]['has_permission'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'No tiene permisos para crear carpetas en el nivel raíz'})
                 }
             
@@ -670,6 +692,7 @@ def create_folder(event, context):
             if check_result[0]['count'] > 0:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Ya existe una carpeta con ese nombre en el nivel raíz'})
                 }
             
@@ -741,6 +764,7 @@ def create_folder(event, context):
         logger.error(f"Error al crear carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al crear carpeta: {str(e)}'})
         }
 
@@ -770,6 +794,7 @@ def update_folder(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -795,6 +820,7 @@ def update_folder(event, context):
             if not access_result or access_result[0]['has_write_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'No tiene permisos para editar esta carpeta'})
                 }
         
@@ -810,6 +836,7 @@ def update_folder(event, context):
             if '/' in nombre_carpeta or '\\' in nombre_carpeta:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'El nombre de la carpeta no puede contener los caracteres / o \\'})
                 }
             
@@ -824,6 +851,7 @@ def update_folder(event, context):
             if check_result[0]['count'] > 0:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Ya existe otra carpeta con ese nombre en esta ubicación'})
                 }
             
@@ -875,6 +903,7 @@ def update_folder(event, context):
         if not update_fields:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se proporcionaron campos para actualizar'})
             }
         
@@ -947,6 +976,7 @@ def update_folder(event, context):
         logger.error(f"Error al actualizar carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al actualizar carpeta: {str(e)}'})
         }
 
@@ -979,6 +1009,7 @@ def delete_folder(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -1004,6 +1035,7 @@ def delete_folder(event, context):
             if not access_result or access_result[0]['has_delete_access'] == 0:
                 return {
                     'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'No tiene permisos para eliminar esta carpeta'})
                 }
         
@@ -1031,6 +1063,7 @@ def delete_folder(event, context):
         if (has_subfolders or has_documents) and not force:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'error': 'La carpeta contiene subcarpetas o documentos. Use force=true para eliminar todo el contenido.',
                     'subcarpetas': has_subfolders,
@@ -1135,6 +1168,7 @@ def delete_folder(event, context):
         logger.error(f"Error al eliminar carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al eliminar carpeta: {str(e)}'})
         }
 
@@ -1161,6 +1195,7 @@ def get_folder_permissions(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -1193,6 +1228,7 @@ def get_folder_permissions(event, context):
         if not can_view_permissions:
             return {
                 'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No tiene permisos para ver los permisos de esta carpeta'})
             }
         
@@ -1271,6 +1307,7 @@ def get_folder_permissions(event, context):
         logger.error(f"Error al obtener permisos de carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener permisos de carpeta: {str(e)}'})
         }
 
@@ -1297,6 +1334,7 @@ def set_folder_permissions(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -1499,6 +1537,7 @@ def set_folder_permissions(event, context):
         logger.error(f"Error al configurar permisos de carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al configurar permisos de carpeta: {str(e)}'})
         }
 
@@ -1525,6 +1564,7 @@ def remove_folder_permissions(event, context):
         if not folder_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Carpeta no encontrada'})
             }
         
@@ -1557,6 +1597,7 @@ def remove_folder_permissions(event, context):
         if not can_manage_permissions:
             return {
                 'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No tiene permisos para gestionar los permisos de esta carpeta'})
             }
         
@@ -1569,6 +1610,7 @@ def remove_folder_permissions(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Falta el campo requerido: {field}'})
                 }
         
@@ -1581,6 +1623,7 @@ def remove_folder_permissions(event, context):
         if tipo_entidad not in ['usuario', 'grupo']:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Tipo de entidad debe ser "usuario" o "grupo"'})
             }
         
@@ -1588,6 +1631,7 @@ def remove_folder_permissions(event, context):
         if tipo_entidad == 'usuario' and id_entidad == folder['id_propietario'] and not tipos_permiso:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se pueden eliminar todos los permisos del propietario de la carpeta'})
             }
         
@@ -1597,6 +1641,7 @@ def remove_folder_permissions(event, context):
             if perm not in valid_permissions:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({
                         'error': f'Tipo de permiso inválido: {perm}. Debe ser uno de: {", ".join(valid_permissions)}'
                     })
@@ -1713,5 +1758,6 @@ def remove_folder_permissions(event, context):
         logger.error(f"Error al eliminar permisos de carpeta: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al eliminar permisos de carpeta: {str(e)}'})
         }

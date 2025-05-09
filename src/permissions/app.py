@@ -23,6 +23,14 @@ def lambda_handler(event, context):
     try:
         http_method = event['httpMethod']
         path = event['path']
+
+        # Manejar solicitudes OPTIONS para CORS preflight
+        if http_method == 'OPTIONS':
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers(),
+                'body': ''
+            }
         
         # Rutas de gestión de roles
         if http_method == 'GET' and path == '/roles':
