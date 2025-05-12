@@ -1227,13 +1227,12 @@ def get_client_documents(event, context):
         categoria_id = query_params.get('categoria')
         estado = query_params.get('estado')
         
-        # Consulta base para documentos del cliente
+        # Consulta base para documentos del cliente - MODIFICADA PARA REMOVER TABLA FALTANTE
         query = """
         SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
                d.id_tipo_documento, td.nombre_tipo as tipo_documento,
                d.version_actual, d.fecha_creacion, d.fecha_modificacion,
                d.id_carpeta, c.nombre_carpeta, d.estado, d.tags,
-               cat.id_categoria, cat.nombre_categoria,
                u_creador.nombre_usuario as creado_por_usuario,
                u_modificador.nombre_usuario as modificado_por_usuario,
                dc.fecha_asignacion, dc.asignado_por,
@@ -1242,8 +1241,6 @@ def get_client_documents(event, context):
         JOIN documentos d ON dc.id_documento = d.id_documento
         JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
         LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
-        LEFT JOIN documentos_categorias dcat ON d.id_documento = dcat.id_documento
-        LEFT JOIN categorias_documento_cliente cat ON dcat.id_categoria = cat.id_categoria
         JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
         JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
         JOIN usuarios u_asignador ON dc.asignado_por = u_asignador.id_usuario
@@ -1254,8 +1251,6 @@ def get_client_documents(event, context):
         SELECT COUNT(DISTINCT d.id_documento) as total
         FROM documentos_clientes dc
         JOIN documentos d ON dc.id_documento = d.id_documento
-        LEFT JOIN documentos_categorias dcat ON d.id_documento = dcat.id_documento
-        LEFT JOIN categorias_documento_cliente cat ON dcat.id_categoria = cat.id_categoria
         WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
         """
         
@@ -1276,20 +1271,14 @@ def get_client_documents(event, context):
             params.append(tipo_documento_id)
             count_params.append(tipo_documento_id)
         
-        if categoria_id:
-            query += " AND cat.id_categoria = %s"
-            count_query += " AND cat.id_categoria = %s"
-            params.append(categoria_id)
-            count_params.append(categoria_id)
+        # Eliminamos filtro de categoría ya que no tenemos la tabla
+        # Ya no filtramos por categoria_id
         
         if estado:
             query += " AND d.estado = %s"
             count_query += " AND d.estado = %s"
             params.append(estado)
             count_params.append(estado)
-        
-        # Añadir cláusula GROUP BY para evitar duplicados por múltiples categorías
-        query += " GROUP BY d.id_documento"
         
         # Añadir ordenamiento y paginación
         query += " ORDER BY d.fecha_modificacion DESC LIMIT %s OFFSET %s"
@@ -1317,19 +1306,6 @@ def get_client_documents(event, context):
                 except:
                     doc['tags'] = []
         
-        # Obtener categorías disponibles para filtrado
-        categories_query = """
-        SELECT DISTINCT cat.id_categoria, cat.nombre_categoria, cat.descripcion, cat.icono, cat.color
-        FROM documentos_clientes dc
-        JOIN documentos d ON dc.id_documento = d.id_documento
-        JOIN documentos_categorias dcat ON d.id_documento = dcat.id_documento
-        JOIN categorias_documento_cliente cat ON dcat.id_categoria = cat.id_categoria
-        WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
-        ORDER BY cat.orden_presentacion
-        """
-        
-        categories = execute_query(categories_query, (client_id,))
-        
         # Obtener tipos de documento disponibles para filtrado
         types_query = """
         SELECT DISTINCT td.id_tipo_documento, td.nombre_tipo, td.descripcion
@@ -1342,7 +1318,7 @@ def get_client_documents(event, context):
         
         document_types = execute_query(types_query, (client_id,))
         
-        # Crear respuesta
+        # Crear respuesta (sin incluir categorías)
         response = {
             'cliente': {
                 'id': client['id_cliente'],
@@ -1350,7 +1326,6 @@ def get_client_documents(event, context):
                 'nombre': client['nombre_razon_social']
             },
             'documentos': documents,
-            'categorias_disponibles': categories,
             'tipos_documento_disponibles': document_types,
             'pagination': {
                 'total': total_documents,

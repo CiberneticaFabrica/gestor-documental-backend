@@ -98,6 +98,42 @@ def insert_audit_record(audit_data):
     ), fetch=False)
 
 
+def check_document_access(document_id, user_id, require_write=False):
+    """
+    Verifica si un usuario tiene acceso a un documento.
+    
+    Args:
+        document_id: ID del documento a verificar
+        user_id: ID del usuario
+        require_write: Si True, verifica permisos de escritura, si False, solo lectura
+        
+    Returns:
+        Boolean indicando si tiene acceso
+    """
+    permission_types = "('escritura', 'administracion')" if require_write else "('lectura', 'escritura', 'administracion')"
+    
+    query = f"""
+        SELECT 1
+        FROM documentos d
+        LEFT JOIN permisos_carpetas pc ON d.id_carpeta = pc.id_carpeta
+        WHERE d.id_documento = %s
+        AND (
+            d.creado_por = %s
+            OR (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario' AND pc.tipo_permiso IN {permission_types})
+            OR (pc.id_entidad IN (SELECT id_grupo FROM usuarios_grupos WHERE id_usuario = %s) AND pc.tipo_entidad = 'grupo' AND pc.tipo_permiso IN {permission_types})
+            OR EXISTS (SELECT 1 FROM usuarios_roles ur WHERE ur.id_usuario = %s AND ur.id_rol IN (
+                SELECT id_rol FROM roles_permisos WHERE id_permiso = (SELECT id_permiso FROM permisos WHERE codigo_permiso = 'admin.todas_operaciones')
+            ))
+        )
+    """
+    
+    try:
+        result = execute_query(query, [document_id, user_id, user_id, user_id, user_id], True)
+        return bool(result)
+    except Exception as e:
+        logger.error(f"Error al verificar acceso a documento: {str(e)}")
+        return False
+
 
 
 
