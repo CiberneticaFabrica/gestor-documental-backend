@@ -1367,6 +1367,7 @@ def set_folder_permissions(event, context):
         if not can_manage_permissions:
             return {
                 'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No tiene permisos para gestionar los permisos de esta carpeta'})
             }
         
@@ -1379,6 +1380,7 @@ def set_folder_permissions(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'Falta el campo requerido: {field}'})
                 }
         
@@ -1391,6 +1393,7 @@ def set_folder_permissions(event, context):
         if tipo_entidad not in ['usuario', 'grupo']:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Tipo de entidad debe ser "usuario" o "grupo"'})
             }
         
@@ -1406,6 +1409,7 @@ def set_folder_permissions(event, context):
             if not entity_result:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Usuario no encontrado o inactivo'})
                 }
         else:  # grupo
@@ -1419,6 +1423,7 @@ def set_folder_permissions(event, context):
             if not entity_result:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Grupo no encontrado'})
                 }
         
@@ -1426,6 +1431,7 @@ def set_folder_permissions(event, context):
         if not isinstance(permisos, list) or not permisos:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El campo permisos debe ser una lista no vacía'})
             }
         
@@ -1434,12 +1440,14 @@ def set_folder_permissions(event, context):
             if not isinstance(perm, dict) or 'tipo_permiso' not in perm:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Cada permiso debe ser un objeto con tipo_permiso'})
                 }
             
             if perm['tipo_permiso'] not in valid_permissions:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({
                         'error': f'Tipo de permiso inválido: {perm["tipo_permiso"]}. Debe ser uno de: {", ".join(valid_permissions)}'
                     })

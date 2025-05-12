@@ -7,6 +7,6 @@ architecture = "x86_64"
 handler = "auth.authentication.app.lambda_handler"
 manifest_hash = "3af2021c7e2a15c442d021861029d7fc"
 packagetype = "Zip"
-functions = ["AuthFunction", "UserFunction", "PermissionsFunction", "DocumentFunction", "FolderFunction"]
+functions = ["AuthFunction", "UserFunction", "PermissionsFunction", "DocumentFunction", "FolderFunction", "DocumentSearchFunction", "ClientFunction"]
 
 [layer_build_definitions]

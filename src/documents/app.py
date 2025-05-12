@@ -1,8 +1,10 @@
 import os
 import json
+import uuid
+import secrets
+import hashlib
 import logging
 import datetime
-import uuid
 
 from common.db import (
     execute_query,
@@ -12,7 +14,6 @@ from common.db import (
 )
 
 from common.headers import add_cors_headers
-
 
 # Configure logger
 logger = logging.getLogger()
@@ -1459,7 +1460,3 @@ def get_document_history(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document history: {str(e)}'})
         }
-
-
-
-

@@ -111,6 +111,7 @@ def lambda_handler(event, context):
         logger.error(f"Error en despachador principal: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})
         }
 
@@ -119,7 +120,7 @@ def validate_session(event, required_permission=None):
     auth_header = event.get('headers', {}).get('Authorization', '')
     
     if not auth_header.startswith('Bearer '):
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Token not provided'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Token not provided'})}
     
     session_token = auth_header.split(' ')[1]
     
@@ -134,18 +135,18 @@ def validate_session(event, required_permission=None):
     session_result = execute_query(check_query, (session_token,))
     
     if not session_result:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Invalid session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Invalid session'})}
     
     session = session_result[0]
     
     if not session['activa']:
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive session'})}
     
     if session['fecha_expiracion'] < datetime.datetime.now():
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Expired session'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Expired session'})}
     
     if session['estado'] != 'activo':
-        return None, {'statusCode': 401, 'body': json.dumps({'error': 'Inactive user'})}
+        return None, {'statusCode': 401, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': 'Inactive user'})}
     
     user_id = session['id_usuario']
     
@@ -165,7 +166,7 @@ def validate_session(event, required_permission=None):
     perm_result = execute_query(perm_query, (user_id, required_permission))
     
     if not perm_result or perm_result[0]['has_permission'] == 0:
-        return user_id, {'statusCode': 403, 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
+        return user_id, {'statusCode': 403, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': f'You do not have the required permission: {required_permission}'})}
     
     return user_id, None
 
@@ -238,6 +239,7 @@ def list_roles(event, context):
         logger.error(f"Error al listar roles: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar roles: {str(e)}'})
         }
 
@@ -264,6 +266,7 @@ def get_role(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -303,6 +306,7 @@ def get_role(event, context):
         logger.error(f"Error al obtener rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener rol: {str(e)}'})
         }
 
@@ -321,6 +325,7 @@ def create_role(event, context):
         if 'nombre_rol' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El nombre del rol es requerido'})
             }
             
@@ -338,6 +343,7 @@ def create_role(event, context):
         if check_result[0]['count'] > 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Ya existe un rol con ese nombre'})
             }
             
@@ -393,6 +399,7 @@ def create_role(event, context):
         logger.error(f"Error al crear rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al crear rol: {str(e)}'})
         }
 
@@ -418,6 +425,7 @@ def update_role(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -430,6 +438,7 @@ def update_role(event, context):
         if 'nombre_rol' not in body:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El nombre del rol es requerido'})
             }
             
@@ -448,6 +457,7 @@ def update_role(event, context):
             if check_name_result[0]['count'] > 0:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Ya existe otro rol con ese nombre'})
                 }
         
@@ -492,6 +502,7 @@ def update_role(event, context):
         logger.error(f"Error al actualizar rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al actualizar rol: {str(e)}'})
         }
 
@@ -518,6 +529,7 @@ def delete_role(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -534,6 +546,7 @@ def delete_role(event, context):
         if check_usage_result[0]['count'] > 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se puede eliminar un rol que está asignado a usuarios'})
             }
             
@@ -574,6 +587,7 @@ def delete_role(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Rol eliminado exitosamente'
                 })
@@ -589,6 +603,7 @@ def delete_role(event, context):
         logger.error(f"Error al eliminar rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al eliminar rol: {str(e)}'})
         }
 
@@ -683,6 +698,7 @@ def list_permissions(event, context):
         logger.error(f"Error al listar permisos: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar permisos: {str(e)}'})
         }
 
@@ -710,6 +726,7 @@ def get_permission(event, context):
         if not permission_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Permiso no encontrado'})
             }
             
@@ -739,6 +756,7 @@ def get_permission(event, context):
         logger.error(f"Error al obtener permiso: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener permiso: {str(e)}'})
         }
 
@@ -759,6 +777,7 @@ def create_permission(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'El campo {field} es requerido'})
                 }
                 
@@ -771,6 +790,7 @@ def create_permission(event, context):
         if categoria not in valid_categories:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'error': f'Categoría inválida. Debe ser una de: {", ".join(valid_categories)}'
                 })
@@ -787,6 +807,7 @@ def create_permission(event, context):
         if check_result[0]['count'] > 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Ya existe un permiso con ese código'})
             }
             
@@ -833,6 +854,7 @@ def create_permission(event, context):
         logger.error(f"Error al crear permiso: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al crear permiso: {str(e)}'})
         }
 
@@ -859,6 +881,7 @@ def update_permission(event, context):
         if not permission_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Permiso no encontrado'})
             }
             
@@ -873,6 +896,7 @@ def update_permission(event, context):
             if field not in body:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': f'El campo {field} es requerido'})
                 }
                 
@@ -885,6 +909,7 @@ def update_permission(event, context):
         if categoria not in valid_categories:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'error': f'Categoría inválida. Debe ser una de: {", ".join(valid_categories)}'
                 })
@@ -902,6 +927,7 @@ def update_permission(event, context):
             if check_code_result[0]['count'] > 0:
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({'error': 'Ya existe otro permiso con ese código'})
                 }
         
@@ -949,6 +975,7 @@ def update_permission(event, context):
         logger.error(f"Error al actualizar permiso: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al actualizar permiso: {str(e)}'})
         }
 
@@ -975,6 +1002,7 @@ def delete_permission(event, context):
         if not permission_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Permiso no encontrado'})
             }
             
@@ -991,6 +1019,7 @@ def delete_permission(event, context):
         if check_usage_result[0]['count'] > 0:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se puede eliminar un permiso que está asignado a roles'})
             }
             
@@ -1030,6 +1059,7 @@ def delete_permission(event, context):
         logger.error(f"Error al eliminar permiso: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al eliminar permiso: {str(e)}'})
         }
 
@@ -1058,6 +1088,7 @@ def get_role_permissions(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -1097,6 +1128,7 @@ def get_role_permissions(event, context):
         logger.error(f"Error al obtener permisos del rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener permisos del rol: {str(e)}'})
         }
 
@@ -1123,6 +1155,7 @@ def assign_permissions_to_role(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -1135,6 +1168,7 @@ def assign_permissions_to_role(event, context):
         if 'permisos' not in body or not isinstance(body['permisos'], list):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requiere una lista de IDs de permisos'})
             }
             
@@ -1157,6 +1191,7 @@ def assign_permissions_to_role(event, context):
                 
                 return {
                     'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
                     'body': json.dumps({
                         'error': 'Algunos permisos no existen',
                         'permisos_invalidos': invalid_ids
@@ -1207,6 +1242,7 @@ def assign_permissions_to_role(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Permisos asignados exitosamente',
                     'permisos_agregados': len(permissions_to_add)
@@ -1215,6 +1251,7 @@ def assign_permissions_to_role(event, context):
         else:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se especificaron permisos para asignar'})
             }
         
@@ -1222,6 +1259,7 @@ def assign_permissions_to_role(event, context):
         logger.error(f"Error al asignar permisos al rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al asignar permisos al rol: {str(e)}'})
         }
 
@@ -1248,6 +1286,7 @@ def remove_permissions_from_role(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -1260,6 +1299,7 @@ def remove_permissions_from_role(event, context):
         if 'permisos' not in body or not isinstance(body['permisos'], list):
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Se requiere una lista de IDs de permisos'})
             }
             
@@ -1308,6 +1348,7 @@ def remove_permissions_from_role(event, context):
             
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'message': 'Permisos eliminados exitosamente',
                     'permisos_eliminados': len(valid_permission_ids)
@@ -1316,6 +1357,7 @@ def remove_permissions_from_role(event, context):
         else:
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'No se especificaron permisos para eliminar'})
             }
         
@@ -1323,6 +1365,7 @@ def remove_permissions_from_role(event, context):
         logger.error(f"Error al quitar permisos del rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al quitar permisos del rol: {str(e)}'})
         }
 
@@ -1349,6 +1392,7 @@ def check_role_permission(event, context):
         if not role_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Rol no encontrado'})
             }
             
@@ -1363,6 +1407,7 @@ def check_role_permission(event, context):
         if not permission_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Permiso no encontrado'})
             }
             
@@ -1392,6 +1437,7 @@ def check_role_permission(event, context):
         logger.error(f"Error al verificar permiso del rol: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al verificar permiso del rol: {str(e)}'})
         }
 
@@ -1420,12 +1466,14 @@ def get_user_permissions(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario no encontrado'})
             }
             
         if user_result[0]['estado'] != 'activo':
             return {
                 'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'El usuario no está activo'})
             }
             
@@ -1487,6 +1535,7 @@ def get_user_permissions(event, context):
         logger.error(f"Error al obtener permisos del usuario: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener permisos del usuario: {str(e)}'})
         }
 
@@ -1513,6 +1562,7 @@ def check_permission(event, context):
         if not user_result:
             return {
                 'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({'error': 'Usuario no encontrado'})
             }
             
@@ -1520,6 +1570,7 @@ def check_permission(event, context):
             # Si el usuario no está activo, no tiene ningún permiso
             return {
                 'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
                 'body': json.dumps({
                     'id_usuario': user_id,
                     'nombre_usuario': user_result[0]['nombre_usuario'],
@@ -1577,5 +1628,6 @@ def check_permission(event, context):
         logger.error(f"Error al verificar permiso del usuario: {str(e)}")
         return {
             'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al verificar permiso del usuario: {str(e)}'})
         }

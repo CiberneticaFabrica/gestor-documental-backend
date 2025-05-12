@@ -234,222 +234,192 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
       Events:    
-          GetUsersOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users
-              Method: OPTIONS
-          GetUsers:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users
-              Method: GET
-          GetUserOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: OPTIONS
-          GetUser:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: GET
-          CreateUserOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users
-              Method: OPTIONS
-          CreateUser:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users
-              Method: POST
-          UpdateUserOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: OPTIONS
-          UpdateUser:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: PUT
-          DeleteUserOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: OPTIONS
-          DeleteUser:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}
-              Method: DELETE
-          GetUserActivityOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/activity
-              Method: OPTIONS
-          GetUserActivity:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/activity
-              Method: GET
-          GetActiveSessionsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/sessions
-              Method: OPTIONS
-          GetActiveSessions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/sessions
-              Method: GET
-          DisableUserOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/disable
-              Method: OPTIONS
-          DisableUser:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/disable
-              Method: PUT
-          ForcePasswordChangeOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/force-password-change
-              Method: OPTIONS
-          ForcePasswordChange:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/force-password-change
-              Method: PUT
-          GetUserRolesOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles
-              Method: OPTIONS  
-          GetUserRoles:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles
-              Method: GET  
-          AssignUserRolesOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles/assign
-              Method: OPTIONS
-          AssignUserRoles:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles/assign
-              Method: POST
-          UpdateUserRolesOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles
-              Method: OPTIONS
-          UpdateUserRoles:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles
-              Method: PUT
-          RemoveUserRolesOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles/remove
-              Method: OPTIONS
-          RemoveUserRoles:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/roles/remove
-              Method: DELETE
-          GetUserGroupsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups
-              Method: OPTIONS
-          GetUserGroups:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups
-              Method: GET
-          AssignUserGroupsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups/assign
-              Method: OPTIONS
-          AssignUserGroups:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups/assign
-              Method: POST
-          UpdateUserGroupsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups
-              Method: OPTIONS
-          UpdateUserGroups:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups
-              Method: PUT 
-          RemoveUserGroupsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups/remove
-              Method: OPTIONS
-          RemoveUserGroups:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/groups/remove
-              Method: POST
-          GetUserPermissionsOptions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/permissions
-              Method: OPTIONS
-          GetUserPermissions:
-            Type: Api
-            Properties:
-              RestApiId: !Ref ApiGateway
-              Path: /users/{id}/permissions
-              Method: GET
+        UsersPathOptions:  # Un solo manejador OPTIONS para la ruta /users
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users
+            Method: OPTIONS
+        GetUsers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users
+            Method: GET
+        CreateUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users
+            Method: POST
+        UserByIdOptions:  # Un solo manejador OPTIONS para la ruta /users/{id}
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}
+            Method: OPTIONS
+        GetUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}
+            Method: GET
+        UpdateUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}
+            Method: PUT
+        DeleteUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}
+            Method: DELETE
+        UserActivityOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/activity
+            Method: OPTIONS
+        GetUserActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/activity
+            Method: GET
+        UserSessionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/sessions
+            Method: OPTIONS
+        GetActiveSessions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/sessions
+            Method: GET
+        UserDisableOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/disable
+            Method: OPTIONS
+        DisableUser:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/disable
+            Method: PUT
+        UserPasswordChangeOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/force-password-change
+            Method: OPTIONS
+        ForcePasswordChange:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/force-password-change
+            Method: PUT
+        UserRolesOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles
+            Method: OPTIONS  
+        GetUserRoles:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles
+            Method: GET  
+        UpdateUserRoles:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles
+            Method: PUT
+        UserRolesAssignOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles/assign
+            Method: OPTIONS
+        AssignUserRoles:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles/assign
+            Method: POST
+        UserRolesRemoveOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles/remove
+            Method: OPTIONS
+        RemoveUserRoles:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/roles/remove
+            Method: DELETE
+        UserGroupsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups
+            Method: OPTIONS
+        GetUserGroups:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups
+            Method: GET
+        UpdateUserGroups:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups
+            Method: PUT 
+        UserGroupsAssignOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups/assign
+            Method: OPTIONS
+        AssignUserGroups:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups/assign
+            Method: POST
+        UserGroupsRemoveOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups/remove
+            Method: OPTIONS
+        RemoveUserGroups:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/groups/remove
+            Method: POST
+        UserPermissionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permissions
+            Method: OPTIONS
+        GetUserPermissions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /users/{id}/permissions
+            Method: GET
   PermissionsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -468,7 +438,7 @@ Resources:
           - !Ref PrivateSubnet2
       Events:
         # Rutas de gestión de roles
-        ListRolesOptions:
+        RolesPathOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -480,7 +450,13 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /roles
             Method: GET
-        GetRoleOptions:
+        CreateRole:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /roles
+            Method: POST
+        RoleByIdOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -492,44 +468,21 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
             Method: GET
-        CreateRoleOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles
-            Method: OPTIONS
-        CreateRole:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles
-            Method: POST
-        UpdateRoleOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles/{id}
-            Method: OPTIONS
         UpdateRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
             Method: PUT
-        DeleteRoleOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles/{id}
-            Method: OPTIONS
         DeleteRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}
             Method: DELETE 
+            
         # Rutas de gestión de permisos
-        ListPermissionsOptions:
+        PermissionsPathOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -541,7 +494,13 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /permissions
             Method: GET
-        GetPermissionOptions:
+        CreatePermission:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /permissions
+            Method: POST
+        PermissionByIdOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -553,44 +512,21 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
             Method: GET
-        CreatePermissionOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /permissions
-            Method: OPTIONS
-        CreatePermission:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /permissions
-            Method: POST
-        UpdatePermissionOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /permissions/{id}
-            Method: OPTIONS
         UpdatePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
             Method: PUT
-        DeletePermissionOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /permissions/{id}
-            Method: OPTIONS
         DeletePermission:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /permissions/{id}
             Method: DELETE
+            
         # Rutas de gestión de roles-permisos
-        GetRolePermissionsOptions:
+        RolePermissionsOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -602,31 +538,19 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: GET
-        AssignPermissionsToRoleOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles/{id}/permissions
-            Method: OPTIONS
         AssignPermissionsToRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: POST
-        RemovePermissionsFromRoleOptions:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /roles/{id}/permissions
-            Method: OPTIONS
         RemovePermissionsFromRole:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions
             Method: DELETE
-        CheckRolePermissionOptions:
+        RolePermissionCheckOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -638,8 +562,9 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /roles/{id}/permissions/{permission_id}
             Method: GET     
+            
         # Rutas de gestión de permisos de usuario
-        GetUserPermissionsOptions:
+        UserPermissionOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -651,7 +576,7 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /users/{id}/permission
             Method: GET
-        CheckPermissionOptions:
+        UserPermissionCheckOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
@@ -680,18 +605,18 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
       Events:
-        # Document management routes con OPTIONS para CORS
+        # Document management routes
+        DocumentsPathOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents
+            Method: OPTIONS
         ListDocuments:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /documents
-            Method: GET
-        GetDocument:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /documents/{id}
             Method: GET
         CreateDocument:
           Type: Api
@@ -699,6 +624,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents
             Method: POST
+        DocumentByIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: OPTIONS
+        GetDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: GET
         UpdateDocument:
           Type: Api
           Properties:
@@ -711,18 +648,19 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}
             Method: DELETE
-        # Document versions routes con OPTIONS para CORS
+            
+        # Document versions routes
+        DocumentVersionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions
+            Method: OPTIONS
         ListDocumentVersions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/versions
-            Method: GET
-        GetDocumentVersion:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /documents/{id}/versions/{version_id}
             Method: GET
         CreateDocumentVersion:
           Type: Api
@@ -730,7 +668,26 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/versions
             Method: POST
-        # Document history route con OPTIONS para CORS
+        DocumentVersionByIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions/{version_id}
+            Method: OPTIONS
+        GetDocumentVersion:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/versions/{version_id}
+            Method: GET
+            
+        # Document history route
+        DocumentHistoryOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/history
+            Method: OPTIONS
         GetDocumentHistory:
           Type: Api
           Properties:
@@ -755,17 +712,17 @@ Resources:
           - !Ref PrivateSubnet2
       Events:
         # Rutas de gestión de carpetas
+        FoldersPathOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders
+            Method: OPTIONS
         ListFolders:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /folders
-            Method: GET
-        GetFolder:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /folders/{id}
             Method: GET
         CreateFolder:
           Type: Api
@@ -773,6 +730,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /folders
             Method: POST
+        FolderByIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}
+            Method: OPTIONS
+        GetFolder:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}
+            Method: GET
         UpdateFolder:
           Type: Api
           Properties:
@@ -785,14 +754,28 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /folders/{id}
             Method: DELETE
+            
         # Rutas de gestión de documentos en carpetas
+        FolderDocumentsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/documents
+            Method: OPTIONS
         ListFolderDocuments:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /folders/{id}/documents
             Method: GET
+            
         # Rutas de gestión de permisos de carpetas
+        FolderPermissionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /folders/{id}/permissions
+            Method: OPTIONS
         GetFolderPermissions:
           Type: Api
           Properties:
@@ -811,6 +794,212 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /folders/{id}/permissions
             Method: DELETE
+  DocumentSearchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: documents.search.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Rutas de búsqueda
+        DocumentsSearchOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/search
+            Method: OPTIONS
+        DocumentsSearch:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/search
+            Method: POST
+        DocumentsSuggestOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/suggest
+            Method: OPTIONS
+        DocumentsSuggest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/suggest
+            Method: GET
+        DocumentsMetadataFilterOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/metadata-filter
+            Method: OPTIONS
+        DocumentsMetadataFilter:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/metadata-filter
+            Method: POST
+        SaveSearchOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/save
+            Method: OPTIONS
+        SaveSearch:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/save
+            Method: POST
+        ExecuteSearchOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/execute
+            Method: OPTIONS
+        ExecuteSearch:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/execute
+            Method: POST
+        GetSavedSearchesOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches
+            Method: OPTIONS
+        GetSavedSearches:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches
+            Method: GET
+        DeleteSavedSearchOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/{id}
+            Method: OPTIONS
+        DeleteSavedSearch:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/searches/{id}
+            Method: DELETE    
+  ClientFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: clients.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Rutas de gestión de clientes
+        ClientsPathOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients
+            Method: OPTIONS
+        ListClients:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients
+            Method: GET
+        CreateClient:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients
+            Method: POST
+        ClientByIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}
+            Method: OPTIONS
+        GetClient:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}
+            Method: GET
+        UpdateClient:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}
+            Method: PUT
+        DeleteClient:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}
+            Method: DELETE
+        # Rutas para documentos del cliente
+        ClientDocumentsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents
+            Method: OPTIONS
+        GetClientDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents
+            Method: GET
+        # Rutas para solicitudes de documentos
+        ClientRequestsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/requests
+            Method: OPTIONS
+        GetClientRequests:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/requests
+            Method: GET
+        CreateDocumentRequest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/requests
+            Method: POST
+        RequestByIdOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/requests/{request_id}
+            Method: OPTIONS
+        UpdateDocumentRequest:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/requests/{request_id}
+            Method: PUT
   ApplicationResourceGroup:
     Type: AWS::ResourceGroups::Group
     Properties:
@@ -872,3 +1061,13 @@ Outputs:
   DocumentFunctionIamRole:
     Description: Implicit IAM Role created for Document function
     Value: !GetAtt DocumentFunctionRole.Arn
+  # Add new outputs for FolderFunction
+  DocumentSearchApi:
+    Description: API Gateway endpoint URL for Prod stage for Document Search function
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/documents/search"
+  DocumentSearchFunctionArn:
+    Description: Document Search Lambda Function ARN
+    Value: !GetAtt DocumentSearchFunction.Arn
+  DocumentSearchFunctionIamRole:
+    Description: Implicit IAM Role created for Document Search function
+    Value: !GetAtt DocumentSearchFunctionRole.Arn
