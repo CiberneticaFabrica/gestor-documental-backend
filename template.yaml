@@ -66,6 +66,12 @@ Resources:
         AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
         AllowOrigin: "'*'"  # En producción, específica tus dominios en lugar de *
         MaxAge: "'600'"
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-documents-processed"
+      VersioningConfiguration:
+        Status: Enabled
 
   AuthFunction:
     Type: AWS::Serverless::Function
@@ -1027,7 +1033,91 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-
+  DocumentViewerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: document_viewer.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          DOCUMENTS_BUCKET: !Ref DocumentsBucket
+          URL_EXPIRATION_SECONDS: 3600
+          PREVIEW_SIZE: "800x600"
+      Policies:
+        - VPCAccessPolicy: {}
+        - S3ReadPolicy:
+            BucketName: !Ref DocumentsBucket
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Rutas para visualización de documentos
+        DocumentContentOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/content
+            Method: OPTIONS
+        GetDocumentContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/content
+            Method: GET
+        DocumentPreviewOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/preview
+            Method: OPTIONS
+        GetDocumentPreview:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/preview
+            Method: GET
+        DocumentDownloadOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/download
+            Method: OPTIONS
+        GenerateDownloadUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/download
+            Method: GET
+        DocumentExtractedOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/extracted
+            Method: OPTIONS
+        GetExtractedData:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/extracted
+            Method: GET
+        DocumentMetadataOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/metadata
+            Method: OPTIONS
+        GetDocumentMetadata:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/metadata
+            Method: GET
 Outputs:
   ApiGatewayUrl:
     Description: URL of the API Gateway
@@ -1071,3 +1161,12 @@ Outputs:
   DocumentSearchFunctionIamRole:
     Description: Implicit IAM Role created for Document Search function
     Value: !GetAtt DocumentSearchFunctionRole.Arn
+  DocumentViewerApi:
+    Description: API Gateway endpoint URL for Prod stage for Document Viewer function
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/documents/{id}/"
+  DocumentViewerFunctionArn:
+    Description: Document Viewer Lambda Function ARN
+    Value: !GetAtt DocumentViewerFunction.Arn
+  DocumentViewerFunctionIamRole:
+    Description: Implicit IAM Role created for Document Viewer function
+    Value: !GetAtt DocumentViewerFunctionRole.Arn
