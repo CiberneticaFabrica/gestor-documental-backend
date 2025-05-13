@@ -140,12 +140,11 @@ def call_generar_solicitudes(cliente_id):
     query = "CALL generar_solicitudes_documentos_cliente(%s)"
     return execute_query(query, (cliente_id,), fetch=False)
  
- 
+
 def call_crear_estructura_carpetas(cliente_id):
     """Llama al procedimiento que crea la estructura de carpetas para un cliente"""
     query = "CALL crear_estructura_carpetas_cliente(%s)"
     return execute_query(query, (cliente_id,), fetch=False)
-
 
 
 

@@ -771,10 +771,6 @@ def create_client(event, context):
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
         )
         """
-        
-        # Llamar a los procedimientos para generar solicitudes y crear estructura de carpetas
-        call_generar_solicitudes(client_id)
-        call_crear_estructura_carpetas(client_id)
 
         # Para depuración, imprimir los valores antes de insertar
         logger.info(f"Insertando cliente con gestor_principal_id: {gestor_principal_id}, gestor_kyc_id: {gestor_kyc_id}")
@@ -789,6 +785,10 @@ def create_client(event, context):
         )
         
         execute_query(insert_query, insert_params, fetch=False)
+
+        # Llamar a los procedimientos para generar solicitudes y crear estructura de carpetas
+        call_generar_solicitudes(client_id)
+        call_crear_estructura_carpetas(client_id)
         
         # Crear entrada inicial en la caché de vista
         cache_entry = {
