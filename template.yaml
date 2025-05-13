@@ -605,6 +605,8 @@ Resources:
         - x86_64
       Policies:
         - VPCAccessPolicy: {}
+        - S3CrudPolicy:  # Añadir esta política
+           BucketName: gestor-documental-bancario-documents-input
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
@@ -655,7 +657,7 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}
             Method: DELETE
-            
+           
         # Document versions routes
         DocumentVersionsOptions:
           Type: Api
@@ -687,7 +689,7 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/versions/{version_id}
             Method: GET
-            
+           
         # Document history route
         DocumentHistoryOptions:
           Type: Api
@@ -1092,6 +1094,91 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /clients/{id}/requests/{request_id}
             Method: PUT
+        # Nuevas rutas para la Vista 360° del cliente
+        ClientCompletenessOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/completeness
+            Method: OPTIONS
+        GetClientCompleteness:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/completeness
+            Method: GET
+        ClientRiskOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/risk
+            Method: OPTIONS
+        GetClientRisk:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/risk
+            Method: GET
+        ClientActivityOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/activity
+            Method: OPTIONS
+        GetClientActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/activity
+            Method: GET
+        DocumentStatusOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/status
+            Method: OPTIONS
+        GetDocumentStatus:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/status
+            Method: GET
+        PendingDocumentsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/pending
+            Method: OPTIONS
+        GetPendingDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/pending
+            Method: GET
+        ExpiringDocumentsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/expiring
+            Method: OPTIONS
+        GetExpiringDocuments:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/expiring
+            Method: GET
+        DocumentRequestsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/requests
+            Method: OPTIONS
+        TrackDocumentRequests:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/documents/requests
+            Method: GET
   ApplicationResourceGroup:
     Type: AWS::ResourceGroups::Group
     Properties:

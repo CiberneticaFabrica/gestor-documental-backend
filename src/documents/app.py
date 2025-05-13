@@ -463,168 +463,122 @@ def get_document(event, context):
         }
 
 def create_document(event, context):
-    """Creates a new document record"""
+    """
+    Genera una URL prefirmada para subir un archivo directamente a S3 con los metadatos
+    necesarios, especialmente el ID del cliente, sin crear registros en la base de datos.
+    """
     try:
         # Validate session
         user_id, error_response = validate_session(event, 'documentos.crear')
         if error_response:
             return error_response
-        
+       
         # Get request body
         body = json.loads(event['body'])
-        
+       
         # Validate required fields
-        required_fields = ['titulo', 'id_tipo_documento']
+        required_fields = ['id_cliente', 'filename']
         for field in required_fields:
             if field not in body:
                 return {
                     'statusCode': 400,
                     'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': f'Missing required field: {field}'})
+                    'body': json.dumps({'error': f'Campo requerido faltante: {field}'})
                 }
-        
+       
         # Get fields from body
-        titulo = body['titulo']
-        id_tipo_documento = body['id_tipo_documento']
-        descripcion = body.get('descripcion')
-        tags = body.get('tags', [])
-        metadatos = body.get('metadatos', {})
-        
-        # Handle id_carpeta - set to None if not provided or empty
-        id_carpeta = body.get('id_carpeta')
-        if id_carpeta == "" or id_carpeta is None:
-            id_carpeta = None
-            logger.info("No folder specified, document will be created without folder assignment")
-        else:
-            # Check if folder exists
-            folder_query = """
-            SELECT id_carpeta, nombre_carpeta
-            FROM carpetas
-            WHERE id_carpeta = %s
-            """
-            
-            folder_result = execute_query(folder_query, (id_carpeta,))
-            if not folder_result:
-                return {
-                    'statusCode': 400,
-                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': 'Invalid folder ID'})
-                }
-            
-            # Check if user has write access to the folder
-            access_query = """
-            SELECT COUNT(*) as has_access
-            FROM permisos_carpetas pc
-            WHERE pc.id_carpeta = %s AND tipo_permiso IN ('escritura', 'administracion') AND (
-                (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
-                (pc.id_entidad IN (
-                    SELECT ug.id_grupo
-                    FROM usuarios_grupos ug
-                    WHERE ug.id_usuario = %s
-                ) AND pc.tipo_entidad = 'grupo')
-            )
-            """
-            
-            access_result = execute_query(access_query, (id_carpeta, user_id, user_id))
-            if not access_result or access_result[0]['has_access'] == 0:
-                return {
-                    'statusCode': 403,
-                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': 'You do not have write permission for this folder'})
-                }
-        
-        # Check if document type exists
-        type_query = """
-        SELECT id_tipo_documento, nombre_tipo, prefijo_nomenclatura
-        FROM tipos_documento
-        WHERE id_tipo_documento = %s
-        """
-        
-        type_result = execute_query(type_query, (id_tipo_documento,))
-        if not type_result:
-            return {
-                'statusCode': 400,
-                'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                'body': json.dumps({'error': 'Invalid document type'})
-            }
-        
-        doc_type = type_result[0]
-        
+        id_cliente = body['id_cliente']
+        filename = body['filename']
+        #id_tipo_documento = body.get('id_tipo_documento', '')
+        content_type = body.get('content_type', 'application/octet-stream')
+       
         # Generate document ID
         doc_id = generate_uuid()
-        
-        # Generate document code
-        prefix = doc_type['prefijo_nomenclatura'] or "DOC"
-        current_date = datetime.datetime.now().strftime("%Y%m%d")
-        
-        # Get the next sequence number for this document type today
-        seq_query = """
-        SELECT COUNT(*) as seq
-        FROM documentos
-        WHERE id_tipo_documento = %s AND DATE(fecha_creacion) = CURDATE()
-        """
-        
-        seq_result = execute_query(seq_query, (id_tipo_documento,))
-        sequence = (seq_result[0]['seq'] + 1) if seq_result else 1
-        
-        # Format document code
-        codigo_documento = f"{prefix}-{current_date}-{sequence:04d}"
-        
-        # Insert document record
-        now = datetime.datetime.now()
-        
-        insert_query = """
-        INSERT INTO documentos (
-            id_documento, codigo_documento, id_tipo_documento, titulo,
-            descripcion, version_actual, fecha_creacion, fecha_modificacion,
-            creado_por, modificado_por, id_carpeta, estado, tags, metadatos
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        insert_params = (
-            doc_id, codigo_documento, id_tipo_documento, titulo,
-            descripcion, 1, now, now,
-            user_id, user_id, id_carpeta, 'borrador',
-            json.dumps(tags), json.dumps(metadatos)
+       
+        # Initialize S3 client
+        import boto3
+        from botocore.config import Config
+       
+        # Configuración de reintentos para servicios AWS
+        retry_config = Config(
+            retries={
+                'max_attempts': 3,
+                'mode': 'standard'
+            }
         )
-        
-        logger.info(f"Attempting to insert document with params: id_carpeta={id_carpeta}, id_tipo_documento={id_tipo_documento}")
-        execute_query(insert_query, insert_params, fetch=False)
-        
-        # Log document creation
-        audit_data = {
-            'fecha_hora': now,
-            'usuario_id': user_id,
-            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
-            'accion': 'crear',
-            'entidad_afectada': 'documento',
-            'id_entidad_afectada': doc_id,
-            'detalles': json.dumps({
-                'titulo': titulo,
-                'tipo_documento': doc_type['nombre_tipo'],
-                'carpeta': id_carpeta
-            }),
-            'resultado': 'éxito'
+       
+        s3_client = boto3.client('s3', config=retry_config)
+       
+        # Definir el bucket y la ruta en S3
+        upload_bucket = 'gestor-documental-bancario-documents-input'  # Usando el nombre específico que mencionaste
+        s3_key = f"incoming/{doc_id}/{filename}"
+       
+        # Generar URL prefirmada para carga directa a S3 con metadatos
+        presigned_post = s3_client.generate_presigned_post(
+            Bucket=upload_bucket,
+            Key=s3_key,
+            Fields={
+                'Content-Type': content_type,
+                'x-amz-meta-client-id': id_cliente,
+                'x-amz-meta-document-id': doc_id
+               
+            },
+            Conditions=[
+                ['content-length-range', 1, 20 * 1024 * 1024],  # Limitar tamaño a 20MB
+                ['eq', '$Content-Type', content_type],
+                ['eq', '$x-amz-meta-client-id', id_cliente],
+                ['eq', '$x-amz-meta-document-id', doc_id]
+            ],
+            ExpiresIn=900  # URL válida por 15 minutos
+        )
+       
+        # Preparar respuesta con instrucciones y URL para carga
+        upload_instructions = {
+            'message': 'URL generada exitosamente. Utilice esta URL para subir el archivo directamente a S3.',
+            'id_documento': doc_id,
+            'upload_url': presigned_post['url'],
+            'upload_fields': presigned_post['fields'],
+            'metadata': {
+                'client-id': id_cliente,
+                'document-id': doc_id
+            },
+            'ruta_s3': f"incoming/{doc_id}/",
+            'expira_en': 900  # segundos
         }
-        
-        insert_audit_record(audit_data)
-        
+       
+        # Registrar en auditoría si es necesario
+        try:
+            audit_data = {
+                'fecha_hora': datetime.datetime.now(),
+                'usuario_id': user_id,
+                'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+                'accion': 'generar_url_carga',
+                'entidad_afectada': 'documento',
+                'id_entidad_afectada': doc_id,
+                'detalles': json.dumps({
+                    'id_cliente': id_cliente,
+                    'filename': filename,
+                    'content_type': content_type
+                }),
+                'resultado': 'éxito'
+            }
+           
+            insert_audit_record(audit_data)
+        except Exception as audit_error:
+            logger.warning(f"Error al registrar auditoría (no crítico): {str(audit_error)}")
+       
         return {
             'statusCode': 201,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({
-                'message': 'Document created successfully',
-                'id_documento': doc_id,
-                'codigo_documento': codigo_documento
-            })
+            'body': json.dumps(upload_instructions)
         }
-        
+       
     except Exception as e:
-        logger.error(f"Error creating document: {str(e)}")
+        logger.error(f"Error al crear documento: {str(e)}")
         return {
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({'error': f'Error creating document: {str(e)}'})
+            'body': json.dumps({'error': f'Error al crear documento: {str(e)}'})
         }
 
 def update_document(event, context):

@@ -135,7 +135,16 @@ def check_document_access(document_id, user_id, require_write=False):
         return False
 
 
-
+def call_generar_solicitudes(cliente_id):
+    """Llama al procedimiento que genera solicitudes documentales para un cliente"""
+    query = "CALL generar_solicitudes_documentos_cliente(%s)"
+    return execute_query(query, (cliente_id,), fetch=False)
+ 
+ 
+def call_crear_estructura_carpetas(cliente_id):
+    """Llama al procedimiento que crea la estructura de carpetas para un cliente"""
+    query = "CALL crear_estructura_carpetas_cliente(%s)"
+    return execute_query(query, (cliente_id,), fetch=False)
 
 
 

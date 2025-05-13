@@ -66,6 +66,36 @@ def lambda_handler(event, context):
             request_id = parts[4]
             event['pathParameters'] = {'client_id': client_id, 'request_id': request_id}
             return update_document_request(event, context)
+        
+        # Rutas adicionales para la vista 360° del cliente
+        elif http_method == 'GET' and path.endswith('/completeness'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_client_document_completeness(event, context)
+        elif http_method == 'GET' and path.endswith('/risk'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_client_document_risk(event, context)
+        elif http_method == 'GET' and path.endswith('/activity'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_client_activity(event, context)
+        elif http_method == 'GET' and path.endswith('/documents/status'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_client_document_status(event, context)
+        elif http_method == 'GET' and path.endswith('/documents/pending'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_pending_documents(event, context)
+        elif http_method == 'GET' and path.endswith('/documents/expiring'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_expiring_documents(event, context)
+        elif http_method == 'GET' and path.endswith('/documents/requests'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return track_document_request(event, context) # dame codigo de esto
                  
         # Si no se encuentra una ruta, devolver 404
         return {
@@ -137,6 +167,16 @@ def validate_session(event, required_permission=None):
     
     return user_id, None
 
+def call_generar_solicitudes(cliente_id):
+    """Llama al procedimiento que genera solicitudes documentales para un cliente"""
+    query = "CALL generar_solicitudes_documentos_cliente(%s)"
+    return execute_query(query, (cliente_id,), fetch=False)
+        
+def call_crear_estructura_carpetas(cliente_id):
+    """Llama al procedimiento que crea la estructura de carpetas para un cliente"""
+    query = "CALL crear_estructura_carpetas_cliente(%s)"
+    return execute_query(query, (cliente_id,), fetch=False)
+ 
 def list_clients(event, context):
     """Lista clientes con paginación y filtros"""
     try:
@@ -732,6 +772,10 @@ def create_client(event, context):
         )
         """
         
+        # Llamar a los procedimientos para generar solicitudes y crear estructura de carpetas
+        call_generar_solicitudes(client_id)
+        call_crear_estructura_carpetas(client_id)
+
         # Para depuración, imprimir los valores antes de insertar
         logger.info(f"Insertando cliente con gestor_principal_id: {gestor_principal_id}, gestor_kyc_id: {gestor_kyc_id}")
         
@@ -1958,23 +2002,30 @@ def update_document_request(event, context):
             try:
                 # Obtener lista actual de documentos pendientes
                 pending_docs_query = """
-                SELECT documentos_pendientes
+                SELECT documentos_pendientes, estado_documental
                 FROM clientes
                 WHERE id_cliente = %s
                 """
                 
                 pending_docs_result = execute_query(pending_docs_query, (client_id,))
                 
-                if pending_docs_result and pending_docs_result[0]['documentos_pendientes']:
-                    pendientes = json.loads(pending_docs_result[0]['documentos_pendientes'])
+                if pending_docs_result:
+                    # Obtener documento pendientes actuales
+                    pendientes = []
+                    if pending_docs_result[0]['documentos_pendientes']:
+                        try:
+                            pendientes = json.loads(pending_docs_result[0]['documentos_pendientes'])
+                        except:
+                            pendientes = []
                     
                     # Eliminar el documento de la lista de pendientes
                     pendientes = [doc for doc in pendientes if doc.get('id_solicitud') != request_id]
                     
-                    # Determinar estado documental
+                    # Determinar estado documental (USAR LOS VALORES CORRECTOS DEL ENUM)
+                    # 'completo','incompleto','pendiente_actualizacion','en_revision'
                     estado_documental = 'completo' if len(pendientes) == 0 else 'incompleto'
                     
-                    # Actualizar cliente
+                    # Actualizar cliente - CORREGIDO PARA USAR SÓLO estado_documental Y NO TOCAR estado
                     client_update_query = """
                     UPDATE clientes
                     SET documentos_pendientes = %s,
@@ -1984,7 +2035,12 @@ def update_document_request(event, context):
                     """
                     
                     now = datetime.datetime.now()
-                    execute_query(client_update_query, (json.dumps(pendientes), estado_documental, now.date(), client_id), fetch=False)
+                    execute_query(client_update_query, (
+                        json.dumps(pendientes), 
+                        estado_documental,
+                        now.date(), 
+                        client_id
+                    ), fetch=False)
                     
                     # Actualizar caché de vista
                     cache_update_query = """
@@ -2057,3 +2113,1435 @@ def update_document_request(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al actualizar solicitud de documento: {str(e)}'})
         }
+
+
+
+def calculate_document_completeness(client_id):
+    """Calcula el nivel de completitud documental del cliente"""
+    try:
+        # Obtener los tipos de documento requeridos según el perfil del cliente
+        required_docs_query = """
+        SELECT td.id_tipo_documento, td.nombre_tipo
+        FROM tipos_documento td
+        JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE cb.requiere_validacion = 1
+        """
+        
+        required_docs = execute_query(required_docs_query)
+        
+        # Obtener los documentos que el cliente ya tiene
+        existing_docs_query = """
+        SELECT d.id_tipo_documento, d.estado
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
+        """
+        
+        existing_docs = execute_query(existing_docs_query, (client_id,))
+        
+        # Crear un conjunto de los tipos de documento que el cliente ya tiene
+        existing_doc_types = {doc['id_tipo_documento'] for doc in existing_docs}
+        
+        # Contar documentos requeridos y documentos existentes
+        total_required = len(required_docs)
+        total_existing = sum(1 for doc_type in required_docs if doc_type['id_tipo_documento'] in existing_doc_types)
+        
+        # Calcular porcentaje de completitud
+        completeness_percentage = (total_existing / total_required * 100) if total_required > 0 else 100
+        
+        # Determinar nivel de completitud
+        completeness_level = 'Completo'
+        if completeness_percentage < 50:
+            completeness_level = 'Crítico'
+        elif completeness_percentage < 80:
+            completeness_level = 'Incompleto'
+        elif completeness_percentage < 100:
+            completeness_level = 'Casi completo'
+        
+        # Identificar documentos faltantes
+        missing_docs = [doc for doc in required_docs if doc['id_tipo_documento'] not in existing_doc_types]
+        
+        return {
+            'completeness_percentage': round(completeness_percentage, 2),
+            'completeness_level': completeness_level,
+            'total_required': total_required,
+            'total_existing': total_existing,
+            'missing_documents': missing_docs
+        }
+    except Exception as e:
+        logger.error(f"Error calculando completitud documental: {str(e)}")
+        raise
+
+def calculate_document_risk(client_id):
+    """Calcula el nivel de riesgo documental del cliente"""
+    try:
+        # Obtener información del cliente
+        client_query = """
+        SELECT c.nivel_riesgo, c.segmento_bancario, c.fecha_ultima_revision_kyc,
+               c.proxima_revision_kyc, c.estado_documental
+        FROM clientes c
+        WHERE c.id_cliente = %s
+        """
+        
+        client_result = execute_query(client_query, (client_id,))
+        if not client_result:
+            return None
+        
+        client = client_result[0]
+        
+        # Calcular días hasta próxima revisión KYC
+        now = datetime.datetime.now().date()
+        days_to_kyc_review = (client['proxima_revision_kyc'] - now).days if client['proxima_revision_kyc'] else 365
+        
+        # Obtener documentos por vencer
+        expiring_docs_query = """
+        SELECT td.nombre_tipo, cb.validez_en_dias, d.fecha_modificacion,
+               DATE_ADD(d.fecha_modificacion, INTERVAL cb.validez_en_dias DAY) as fecha_vencimiento,
+               DATEDIFF(DATE_ADD(d.fecha_modificacion, INTERVAL cb.validez_en_dias DAY), CURDATE()) as dias_restantes
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+        JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE dc.id_cliente = %s 
+          AND d.estado = 'publicado' 
+          AND cb.validez_en_dias IS NOT NULL
+        ORDER BY dias_restantes
+        """
+        
+        expiring_docs = execute_query(expiring_docs_query, (client_id,))
+        
+        # Contar documentos por vencer pronto (menos de 30 días)
+        expiring_soon_count = sum(1 for doc in expiring_docs if doc['dias_restantes'] is not None and doc['dias_restantes'] <= 30)
+        
+        # Contar documentos vencidos
+        expired_count = sum(1 for doc in expiring_docs if doc['dias_restantes'] is not None and doc['dias_restantes'] <= 0)
+        
+        # Calcular nivel de riesgo documental
+        risk_level = 'Bajo'
+        risk_score = 0
+        
+        # Factor de riesgo por nivel de riesgo del cliente
+        risk_factor_mapping = {
+            'bajo': 1,
+            'medio': 2,
+            'alto': 3,
+            'muy_alto': 4
+        }
+        
+        risk_score += risk_factor_mapping.get(client['nivel_riesgo'], 1)
+        
+        # Factor de riesgo por estado documental
+        if client['estado_documental'] == 'incompleto':
+            risk_score += 2
+        elif client['estado_documental'] == 'pendiente_actualizacion':
+            risk_score += 3
+        
+        # Factor de riesgo por documentos vencidos o por vencer
+        risk_score += expired_count * 2 + expiring_soon_count
+        
+        # Factor de riesgo por cercanía a revisión KYC
+        if days_to_kyc_review <= 30:
+            risk_score += 2
+        elif days_to_kyc_review <= 90:
+            risk_score += 1
+        
+        # Determinar nivel de riesgo según puntuación
+        if risk_score >= 8:
+            risk_level = 'Alto'
+        elif risk_score >= 5:
+            risk_level = 'Medio'
+        
+        return {
+            'risk_level': risk_level,
+            'risk_score': risk_score,
+            'days_to_kyc_review': days_to_kyc_review,
+            'expired_documents': expired_count,
+            'expiring_soon_documents': expiring_soon_count,
+            'client_risk_level': client['nivel_riesgo'],
+            'document_status': client['estado_documental']
+        }
+    except Exception as e:
+        logger.error(f"Error calculando riesgo documental: {str(e)}")
+        raise
+
+def get_client_activity(event, context):
+    """Obtiene la actividad reciente del cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Obtener parámetros de consulta para paginación
+        query_params = event.get('queryStringParameters', {}) or {}
+        limit = int(query_params.get('limit', 20))
+        
+        # Obtener actividad de auditoría
+        audit_query = """
+        SELECT ra.fecha_hora, ra.accion, ra.entidad_afectada, 
+               ra.id_entidad_afectada, ra.detalles, ra.resultado,
+               u.nombre_usuario as usuario_nombre
+        FROM registros_auditoria ra
+        JOIN usuarios u ON ra.usuario_id = u.id_usuario
+        WHERE (
+            (ra.entidad_afectada = 'cliente' AND ra.id_entidad_afectada = %s) OR
+            (ra.entidad_afectada = 'documento' AND ra.detalles LIKE %s) OR
+            (ra.entidad_afectada = 'solicitud_documento' AND ra.detalles LIKE %s)
+        )
+        ORDER BY ra.fecha_hora DESC
+        LIMIT %s
+        """
+        
+        activities = execute_query(
+            audit_query, 
+            (
+                client_id, 
+                f'%"id_cliente":"{client_id}"%', 
+                f'%"id_cliente":"{client_id}"%',
+                limit
+            )
+        )
+        
+        # Procesar resultados
+        for activity in activities:
+            if 'fecha_hora' in activity and activity['fecha_hora']:
+                activity['fecha_hora'] = activity['fecha_hora'].isoformat()
+            
+            if 'detalles' in activity and activity['detalles']:
+                try:
+                    activity['detalles'] = json.loads(activity['detalles'])
+                except:
+                    pass
+        
+        response = {
+            'client_id': client_id,
+            'client_name': client['nombre_razon_social'],
+            'client_code': client['codigo_cliente'],
+            'activities': activities
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener actividad del cliente: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener actividad del cliente: {str(e)}'})
+        }
+
+def get_client_kpis(client_id):
+    """Obtiene los indicadores clave de desempeño del cliente"""
+    try:
+        # Obtener información del cliente
+        client_query = """
+        SELECT c.nivel_riesgo, c.segmento_bancario, c.fecha_ultima_revision_kyc,
+               c.proxima_revision_kyc, c.estado_documental, c.fecha_alta,
+               c.fecha_ultima_actividad
+        FROM clientes c
+        WHERE c.id_cliente = %s
+        """
+        
+        client_result = execute_query(client_query, (client_id,))
+        if not client_result:
+            return None
+        
+        client = client_result[0]
+        
+        # Calcular antigüedad del cliente en días
+        now = datetime.datetime.now().date()
+        client_age_days = (now - client['fecha_alta'].date()).days if client['fecha_alta'] else 0
+        
+        # Calcular días desde última actividad
+        days_since_last_activity = (now - client['fecha_ultima_actividad']).days if client['fecha_ultima_actividad'] else None
+        
+        # Calcular días hasta próxima revisión KYC
+        days_to_kyc_review = (client['proxima_revision_kyc'] - now).days if client['proxima_revision_kyc'] else None
+        
+        # Obtener conteo de documentos
+        docs_query = """
+        SELECT COUNT(*) as total_docs,
+               SUM(CASE WHEN d.estado = 'publicado' THEN 1 ELSE 0 END) as active_docs,
+               SUM(CASE WHEN d.estado = 'borrador' THEN 1 ELSE 0 END) as draft_docs,
+               SUM(CASE WHEN d.estado = 'archivado' THEN 1 ELSE 0 END) as archived_docs
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
+        """
+        
+        docs_result = execute_query(docs_query, (client_id,))
+        
+        # Obtener conteo de solicitudes
+        requests_query = """
+        SELECT COUNT(*) as total_requests,
+               SUM(CASE WHEN estado = 'pendiente' THEN 1 ELSE 0 END) as pending_requests,
+               SUM(CASE WHEN estado = 'recordatorio_enviado' THEN 1 ELSE 0 END) as reminder_sent,
+               SUM(CASE WHEN estado = 'recibido' THEN 1 ELSE 0 END) as received_requests,
+               SUM(CASE WHEN fecha_limite < CURDATE() AND estado IN ('pendiente', 'recordatorio_enviado') THEN 1 ELSE 0 END) as overdue_requests
+        FROM documentos_solicitados
+        WHERE id_cliente = %s
+        """
+        
+        requests_result = execute_query(requests_query, (client_id,))
+        
+        # Obtener información de completitud y riesgo
+        completeness_info = calculate_document_completeness(client_id)
+        risk_info = calculate_document_risk(client_id)
+        
+        # Construir objeto de KPIs
+        kpis = {
+            'client_age_days': client_age_days,
+            'days_since_last_activity': days_since_last_activity,
+            'days_to_kyc_review': days_to_kyc_review,
+            'documents': docs_result[0] if docs_result else {},
+            'requests': requests_result[0] if requests_result else {},
+            'completeness': {
+                'percentage': completeness_info['completeness_percentage'],
+                'level': completeness_info['completeness_level']
+            },
+            'risk': {
+                'level': risk_info['risk_level'],
+                'score': risk_info['risk_score']
+            }
+        }
+        
+        return kpis
+    except Exception as e:
+        logger.error(f"Error obteniendo KPIs del cliente: {str(e)}")
+        raise
+
+def get_client_document_status(event, context):
+    """Obtiene el estado de los documentos del cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado, estado_documental
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Obtener resumen de estado de documentos por tipo y categoría
+        status_query = """
+        SELECT td.id_tipo_documento, td.nombre_tipo, cb.nombre_categoria as categoria_bancaria,
+               d.estado, COUNT(*) as cantidad,
+               MAX(d.fecha_modificacion) as ultima_actualizacion
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+        LEFT JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        LEFT JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
+        GROUP BY td.id_tipo_documento, td.nombre_tipo, cb.nombre_categoria, d.estado
+        ORDER BY cb.nombre_categoria, td.nombre_tipo, d.estado
+        """
+        
+        status_results = execute_query(status_query, (client_id,))
+        
+        # Agrupar por categoría y tipo
+        status_by_category = {}
+        
+        for status in status_results:
+            category = status['categoria_bancaria'] or 'Sin categoría'
+            doc_type = status['nombre_tipo']
+            doc_status = status['estado']
+            
+            if category not in status_by_category:
+                status_by_category[category] = {}
+            
+            if doc_type not in status_by_category[category]:
+                status_by_category[category][doc_type] = {
+                    'id_tipo_documento': status['id_tipo_documento'],
+                    'estados': {}
+                }
+            
+            status_by_category[category][doc_type]['estados'][doc_status] = {
+                'cantidad': status['cantidad'],
+                'ultima_actualizacion': status['ultima_actualizacion'].isoformat() if status['ultima_actualizacion'] else None
+            }
+        
+        # Obtener completitud documental
+        completeness_info = calculate_document_completeness(client_id)
+        
+        response = {
+            'client_id': client_id,
+            'client_name': client['nombre_razon_social'],
+            'client_code': client['codigo_cliente'],
+            'estado_documental': client['estado_documental'],
+            'completeness': {
+                'percentage': completeness_info['completeness_percentage'],
+                'level': completeness_info['completeness_level'],
+                'total_required': completeness_info['total_required'],
+                'total_existing': completeness_info['total_existing']
+            },
+            'status_by_category': status_by_category
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener estado de documentos: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener estado de documentos: {str(e)}'})
+        }
+
+def get_pending_documents(event, context):
+    """Obtiene los documentos pendientes del cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado, documentos_pendientes
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Obtener documentos pendientes almacenados en el campo JSON
+        pending_docs = []
+        if client['documentos_pendientes']:
+            try:
+                pending_docs = json.loads(client['documentos_pendientes'])
+            except:
+                pending_docs = []
+        
+        # Obtener documentos solicitados
+        requests_query = """
+        SELECT ds.id_solicitud, ds.id_tipo_documento, ds.fecha_solicitud,
+               ds.solicitado_por, u.nombre_usuario as solicitado_por_nombre,
+               ds.fecha_limite, ds.estado, ds.notas,
+               td.nombre_tipo, td.descripcion,
+               DATEDIFF(ds.fecha_limite, CURDATE()) as dias_restantes
+        FROM documentos_solicitados ds
+        JOIN tipos_documento td ON ds.id_tipo_documento = td.id_tipo_documento
+        JOIN usuarios u ON ds.solicitado_por = u.id_usuario
+        WHERE ds.id_cliente = %s
+        AND ds.estado IN ('pendiente', 'recordatorio_enviado')
+        ORDER BY ds.fecha_limite
+        """
+        
+        requests = execute_query(requests_query, (client_id,))
+        
+        # Procesar resultados
+        for request in requests:
+            if 'fecha_solicitud' in request and request['fecha_solicitud']:
+                request['fecha_solicitud'] = request['fecha_solicitud'].isoformat()
+            if 'fecha_limite' in request and request['fecha_limite']:
+                request['fecha_limite'] = request['fecha_limite'].isoformat()
+            request['vencido'] = request['dias_restantes'] < 0 if request['dias_restantes'] is not None else False
+        
+        # Obtener documentos faltantes según completitud
+        completeness_info = calculate_document_completeness(client_id)
+        missing_docs = completeness_info['missing_documents']
+        
+        response = {
+            'client_id': client_id,
+            'client_name': client['nombre_razon_social'],
+            'client_code': client['codigo_cliente'],
+            'pending_documents': pending_docs,
+            'document_requests': requests,
+            'missing_documents': missing_docs,
+            'completeness_percentage': completeness_info['completeness_percentage']
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener documentos pendientes: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener documentos pendientes: {str(e)}'})
+        }
+
+def get_expiring_documents(event, context):
+    """Obtiene los documentos próximos a vencer del cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Obtener parámetros de consulta
+        query_params = event.get('queryStringParameters', {}) or {}
+        days_threshold = int(query_params.get('days', 90))  # Por defecto 90 días
+        
+        # Obtener documentos por vencer
+        expiring_docs_query = """
+        SELECT d.id_documento, d.codigo_documento, d.titulo,
+               td.id_tipo_documento, td.nombre_tipo, 
+               cb.id_categoria_bancaria, cb.nombre_categoria, cb.validez_en_dias,
+               d.fecha_modificacion as fecha_documento,
+               DATE_ADD(d.fecha_modificacion, INTERVAL cb.validez_en_dias DAY) as fecha_vencimiento,
+               DATEDIFF(DATE_ADD(d.fecha_modificacion, INTERVAL cb.validez_en_dias DAY), CURDATE()) as dias_restantes
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+        JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE dc.id_cliente = %s 
+          AND d.estado = 'publicado' 
+          AND cb.validez_en_dias IS NOT NULL
+          AND DATEDIFF(DATE_ADD(d.fecha_modificacion, INTERVAL cb.validez_en_dias DAY), CURDATE()) BETWEEN -30 AND %s
+        ORDER BY dias_restantes
+        """
+        
+        expiring_docs = execute_query(expiring_docs_query, (client_id, days_threshold))
+        
+        # Categorizar documentos
+        expired_docs = []
+        critical_docs = []
+        warning_docs = []
+        upcoming_docs = []
+        
+        for doc in expiring_docs:
+            # Formatear fechas
+            if 'fecha_documento' in doc and doc['fecha_documento']:
+                doc['fecha_documento'] = doc['fecha_documento'].isoformat()
+            if 'fecha_vencimiento' in doc and doc['fecha_vencimiento']:
+                doc['fecha_vencimiento'] = doc['fecha_vencimiento'].isoformat()
+            
+            # Categorizar según días restantes
+            if doc['dias_restantes'] <= 0:
+                expired_docs.append(doc)
+            elif doc['dias_restantes'] <= 15:
+                critical_docs.append(doc)
+            elif doc['dias_restantes'] <= 30:
+                warning_docs.append(doc)
+            else:
+                upcoming_docs.append(doc)
+        
+        response = {
+            'client_id': client_id,
+            'client_name': client['nombre_razon_social'],
+            'client_code': client['codigo_cliente'],
+            'expired': expired_docs,
+            'critical': critical_docs,
+            'warning': warning_docs,
+            'upcoming': upcoming_docs,
+            'summary': {
+                'expired_count': len(expired_docs),
+                'critical_count': len(critical_docs),
+                'warning_count': len(warning_docs),
+                'upcoming_count': len(upcoming_docs),
+                'total_expiring': len(expiring_docs)
+            }
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener documentos por vencer: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener documentos por vencer: {str(e)}'})
+        }
+
+
+
+def get_client_document_completeness(event, context):
+    """Calcula y devuelve la completitud documental de un cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado,
+               gestor_principal_id, gestor_kyc_id, estado_documental,
+               fecha_ultima_revision_kyc, proxima_revision_kyc
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Verificar permisos - el usuario debe ser gestor del cliente o tener permiso admin
+        is_admin_query = """
+        SELECT COUNT(*) as is_admin
+        FROM usuarios_roles ur
+        JOIN roles_permisos rp ON ur.id_rol = rp.id_rol
+        JOIN permisos p ON rp.id_permiso = p.id_permiso
+        WHERE ur.id_usuario = %s AND p.codigo_permiso IN ('admin.clientes', 'admin.documentos')
+        """
+        
+        is_admin_result = execute_query(is_admin_query, (user_id,))
+        is_admin = is_admin_result[0]['is_admin'] > 0 if is_admin_result else False
+        
+        if not is_admin and client['gestor_principal_id'] != user_id and client['gestor_kyc_id'] != user_id:
+            return {
+                'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'No tiene permisos para ver este cliente'})
+            }
+        
+        # Calcular métricas de completitud documental
+        completeness = info_calculate_document_completeness(client_id)
+        
+        # Registrar en auditoría
+        audit_data = {
+            'fecha_hora': datetime.datetime.now(),
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'consultar',
+            'entidad_afectada': 'completitud_documento',
+            'id_entidad_afectada': client_id,
+            'detalles': json.dumps({'nombre_cliente': client['nombre_razon_social']}),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
+        # Preparar respuesta
+        response = {
+            'cliente': {
+                'id': client_id,
+                'codigo': client['codigo_cliente'],
+                'nombre': client['nombre_razon_social'],
+                'estado_documental': client['estado_documental']
+            },
+            'completitud': completeness
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al calcular completitud documental: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al calcular completitud documental: {str(e)}'})
+        }
+
+def info_calculate_document_completeness(client_id):
+    """Función interna para calcular la completitud documental de un cliente"""
+    try:
+        # Obtener documentos necesarios según el tipo de cliente
+        required_docs_query = """
+        SELECT c.tipo_cliente, c.segmento_bancario, c.nivel_riesgo,
+               c.documentos_pendientes
+        FROM clientes c
+        WHERE c.id_cliente = %s
+        """
+        
+        client_info = execute_query(required_docs_query, (client_id,))
+        
+        if not client_info:
+            return {
+                'porcentaje_completitud': 0,
+                'estado': 'desconocido',
+                'documentos_requeridos': 0,
+                'documentos_completados': 0,
+                'documentos_pendientes': 0,
+                'documentos_vencidos': 0,
+                'detalle': []
+            }
+        
+        client_type = client_info[0]['tipo_cliente']
+        risk_level = client_info[0]['nivel_riesgo']
+        segment = client_info[0]['segmento_bancario']
+        
+        # Obtener lista de documentos requeridos según perfil del cliente
+        required_docs_by_profile_query = """
+        SELECT td.id_tipo_documento, td.nombre_tipo, 
+               tdb.requiere_validacion_manual,
+               cb.validez_en_dias, cb.requiere_validacion
+        FROM tipos_documento td
+        JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE (
+            CASE 
+                WHEN %s = 'persona_fisica' THEN td.es_documento_bancario = 1 AND cb.nombre_categoria IN ('identificacion_personal', 'prueba_domicilio', 'informacion_financiera')
+                WHEN %s = 'empresa' THEN td.es_documento_bancario = 1 AND cb.nombre_categoria IN ('documento_constitucion', 'identificacion_representante', 'informacion_financiera_empresa', 'prueba_domicilio_empresa')
+                ELSE td.es_documento_bancario = 1 AND cb.nombre_categoria IN ('documento_identidad_organismo', 'prueba_legal')
+            END
+        )
+        """
+        
+        required_docs = execute_query(required_docs_by_profile_query, (client_type, client_type))
+        
+        # Documentos adicionales basados en nivel de riesgo
+        if risk_level in ['alto', 'muy_alto']:
+            additional_docs_query = """
+            SELECT td.id_tipo_documento, td.nombre_tipo, 
+                   tdb.requiere_validacion_manual,
+                   cb.validez_en_dias, cb.requiere_validacion
+            FROM tipos_documento td
+            JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+            JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+            WHERE cb.nombre_categoria IN ('declaracion_origen_fondos', 'documentacion_extendida_kyc')
+            """
+            
+            additional_docs = execute_query(additional_docs_query)
+            required_docs.extend(additional_docs)
+        
+        # Lista consolidada de documentos requeridos
+        required_doc_types = [doc['id_tipo_documento'] for doc in required_docs]
+        
+        # Obtener documentos actuales del cliente
+        current_docs_query = """
+        SELECT d.id_documento, d.id_tipo_documento, td.nombre_tipo,
+               d.fecha_modificacion, d.estado, d.validado_manualmente,
+               d.confianza_extraccion
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+        LEFT JOIN tipos_documento_bancario tdb ON td.id_tipo_documento = tdb.id_tipo_documento
+        LEFT JOIN categorias_bancarias cb ON tdb.id_categoria_bancaria = cb.id_categoria_bancaria
+        WHERE dc.id_cliente = %s AND d.estado = 'publicado'
+        """
+        
+        current_docs = execute_query(current_docs_query, (client_id,))
+        
+        # Calcular documentos completados, pendientes y vencidos
+        now = datetime.datetime.now()
+        doc_statuses = []
+        completed_docs = 0
+        expired_docs = 0
+        
+        # Documentos pendientes del cliente
+        pending_docs = []
+        if client_info[0]['documentos_pendientes']:
+            try:
+                pending_docs = json.loads(client_info[0]['documentos_pendientes'])
+                if not isinstance(pending_docs, list):
+                    pending_docs = []
+            except:
+                pending_docs = []
+        
+        # Procesar cada tipo de documento requerido
+        for req_doc in required_docs:
+            doc_id = req_doc['id_tipo_documento']
+            doc_name = req_doc['nombre_tipo']
+            validity_days = req_doc['validez_en_dias']
+            requires_validation = req_doc['requiere_validacion'] == 1
+            
+            matching_docs = [d for d in current_docs if d['id_tipo_documento'] == doc_id]
+            
+            status = {
+                'id_tipo_documento': doc_id,
+                'nombre_tipo': doc_name,
+                'estado': 'pendiente',
+                'fecha_vencimiento': None,
+                'dias_restantes': None,
+                'requiere_validacion': requires_validation,
+                'validado': False
+            }
+            
+            if matching_docs:
+                # Tomar el documento más reciente
+                latest_doc = sorted(matching_docs, key=lambda x: x['fecha_modificacion'], reverse=True)[0]
+                
+                status['validado'] = latest_doc['validado_manualmente'] == 1
+                
+                # Calcular fecha de vencimiento si aplica
+                if validity_days:
+                    expiry_date = latest_doc['fecha_modificacion'] + datetime.timedelta(days=validity_days)
+                    status['fecha_vencimiento'] = expiry_date.isoformat()
+                    
+                    days_remaining = (expiry_date - now).days
+                    status['dias_restantes'] = days_remaining
+                    
+                    if days_remaining < 0:
+                        status['estado'] = 'vencido'
+                        expired_docs += 1
+                    else:
+                        status['estado'] = 'completado' if not requires_validation or status['validado'] else 'pendiente_validacion'
+                        if status['estado'] == 'completado':
+                            completed_docs += 1
+                else:
+                    status['estado'] = 'completado' if not requires_validation or status['validado'] else 'pendiente_validacion'
+                    if status['estado'] == 'completado':
+                        completed_docs += 1
+            else:
+                # Verificar si está en la lista de documentos pendientes
+                is_pending = any(p.get('id_tipo_documento') == doc_id for p in pending_docs)
+                if is_pending:
+                    pending_info = next((p for p in pending_docs if p.get('id_tipo_documento') == doc_id), None)
+                    status['estado'] = 'solicitado'
+                    
+                    if pending_info and 'fecha_limite' in pending_info:
+                        try:
+                            fecha_limite = datetime.datetime.fromisoformat(pending_info['fecha_limite'])
+                            status['fecha_vencimiento'] = fecha_limite.isoformat()
+                            days_remaining = (fecha_limite - now).days
+                            status['dias_restantes'] = days_remaining
+                        except:
+                            pass
+            
+            doc_statuses.append(status)
+        
+        # Calcular porcentaje de completitud
+        total_required = len(required_docs)
+        completeness_percentage = (completed_docs / total_required * 100) if total_required > 0 else 0
+        
+        # Determinar estado general
+        if completeness_percentage == 100:
+            status = 'completo'
+        elif expired_docs > 0:
+            status = 'documentos_vencidos'
+        elif completed_docs == 0:
+            status = 'sin_documentacion'
+        else:
+            status = 'incompleto'
+        
+        # Resultado
+        result = {
+            'porcentaje_completitud': round(completeness_percentage, 2),
+            'estado': status,
+            'documentos_requeridos': total_required,
+            'documentos_completados': completed_docs,
+            'documentos_pendientes': total_required - completed_docs,
+            'documentos_vencidos': expired_docs,
+            'detalle': doc_statuses
+        }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error en cálculo de completitud: {str(e)}")
+        return {
+            'porcentaje_completitud': 0,
+            'estado': 'error',
+            'documentos_requeridos': 0,
+            'documentos_completados': 0,
+            'documentos_pendientes': 0,
+            'documentos_vencidos': 0,
+            'error': str(e)
+        }
+
+
+
+def get_client_document_risk(event, context):
+    """Calcula y devuelve el riesgo documental de un cliente"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado,
+               gestor_principal_id, gestor_kyc_id, nivel_riesgo,
+               fecha_ultima_revision_kyc, proxima_revision_kyc
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Verificar permisos - el usuario debe ser gestor del cliente o tener permiso admin
+        is_admin_query = """
+        SELECT COUNT(*) as is_admin
+        FROM usuarios_roles ur
+        JOIN roles_permisos rp ON ur.id_rol = rp.id_rol
+        JOIN permisos p ON rp.id_permiso = p.id_permiso
+        WHERE ur.id_usuario = %s AND p.codigo_permiso IN ('admin.clientes', 'admin.documentos')
+        """
+        
+        is_admin_result = execute_query(is_admin_query, (user_id,))
+        is_admin = is_admin_result[0]['is_admin'] > 0 if is_admin_result else False
+        
+        if not is_admin and client['gestor_principal_id'] != user_id and client['gestor_kyc_id'] != user_id:
+            return {
+                'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'No tiene permisos para ver este cliente'})
+            }
+        
+        # Calcular métricas de riesgo documental
+        risk = info_calculate_document_risk(client_id)
+        
+        # Actualizar caché de vista del cliente si es necesario
+        if risk['nivel_riesgo_calculado'] != client['nivel_riesgo']:
+            update_query = """
+            UPDATE vista_cliente_cache
+            SET ultima_actualizacion = %s,
+                kpis_cliente = JSON_SET(
+                    COALESCE(kpis_cliente, '{}'),
+                    '$.nivel_riesgo_calculado', %s
+                )
+            WHERE id_cliente = %s
+            """
+            
+            now = datetime.datetime.now()
+            execute_query(update_query, (now, risk['nivel_riesgo_calculado'], client_id), fetch=False)
+        
+        # Registrar en auditoría
+        audit_data = {
+            'fecha_hora': datetime.datetime.now(),
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'consultar',
+            'entidad_afectada': 'riesgo_documento',
+            'id_entidad_afectada': client_id,
+            'detalles': json.dumps({'nombre_cliente': client['nombre_razon_social']}),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
+        # Preparar respuesta
+        response = {
+            'cliente': {
+                'id': client_id,
+                'codigo': client['codigo_cliente'],
+                'nombre': client['nombre_razon_social'],
+                'nivel_riesgo_actual': client['nivel_riesgo']
+            },
+            'riesgo': risk
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al calcular riesgo documental: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al calcular riesgo documental: {str(e)}'})
+        }
+
+def info_calculate_document_risk(client_id):
+    """Función interna para calcular el riesgo documental de un cliente"""
+    try:
+        # Obtener información del cliente
+        client_query = """
+        SELECT c.tipo_cliente, c.segmento_bancario, c.nivel_riesgo, 
+               c.fecha_ultima_revision_kyc, c.proxima_revision_kyc,
+               c.estado_documental, c.fecha_alta, c.clasificacion_fatca
+        FROM clientes c
+        WHERE c.id_cliente = %s
+        """
+        
+        client_info = execute_query(client_query, (client_id,))
+        
+        if not client_info:
+            return {
+                'nivel_riesgo_calculado': 'desconocido',
+                'puntuacion_riesgo': 0,
+                'factores_riesgo': [],
+                'recomendaciones': []
+            }
+        
+        client = client_info[0]
+        current_risk = client['nivel_riesgo'] or 'bajo'
+        
+        # Inicializar factores y puntuación de riesgo
+        risk_factors = []
+        risk_score = 0
+        factor_weights = {
+            'documentacion_incompleta': 30,
+            'documentos_vencidos': 25,
+            'alta_reciente': 15,
+            'revision_vencida': 20,
+            'clasificacion_fatca': 10,
+            'tipo_cliente': 15,
+            'segmento': 10,
+            'confianza_documentos': 15
+        }
+        
+        # Obtener completitud documental
+        completeness = calculate_document_completeness(client_id)
+        
+        # Factor 1: Documentación incompleta
+        if completeness['porcentaje_completitud'] < 100:
+            risk_level = 'bajo'
+            points = 0
+            
+            if completeness['porcentaje_completitud'] < 25:
+                risk_level = 'muy_alto'
+                points = factor_weights['documentacion_incompleta']
+            elif completeness['porcentaje_completitud'] < 50:
+                risk_level = 'alto'
+                points = int(factor_weights['documentacion_incompleta'] * 0.75)
+            elif completeness['porcentaje_completitud'] < 75:
+                risk_level = 'medio'
+                points = int(factor_weights['documentacion_incompleta'] * 0.5)
+            else:
+                risk_level = 'bajo'
+                points = int(factor_weights['documentacion_incompleta'] * 0.25)
+                
+            risk_score += points
+            risk_factors.append({
+                'factor': 'documentacion_incompleta',
+                'descripcion': f'Documentación incompleta ({completeness["porcentaje_completitud"]}%)',
+                'nivel_riesgo': risk_level,
+                'puntos': points
+            })
+        
+        # Factor 2: Documentos vencidos
+        if completeness['documentos_vencidos'] > 0:
+            points = factor_weights['documentos_vencidos']
+            risk_score += points
+            risk_factors.append({
+                'factor': 'documentos_vencidos',
+                'descripcion': f'Tiene {completeness["documentos_vencidos"]} documentos vencidos',
+                'nivel_riesgo': 'alto',
+                'puntos': points
+            })
+        
+        # Factor 3: Cliente reciente (menos de 3 meses)
+        if client['fecha_alta']:
+            now = datetime.datetime.now()
+            days_since_creation = (now - client['fecha_alta']).days
+            
+            if days_since_creation < 90:
+                points = int(factor_weights['alta_reciente'] * (1 - days_since_creation/90))
+                risk_score += points
+                risk_factors.append({
+                    'factor': 'alta_reciente',
+                    'descripcion': f'Cliente nuevo (hace {days_since_creation} días)',
+                    'nivel_riesgo': 'medio',
+                    'puntos': points
+                })
+        
+        # Factor 4: Revisión KYC vencida
+        if client['proxima_revision_kyc'] and client['proxima_revision_kyc'] < datetime.datetime.now().date():
+            days_overdue = (datetime.datetime.now().date() - client['proxima_revision_kyc']).days
+            risk_level = 'bajo'
+            points = 0
+            
+            if days_overdue > 180:  # Más de 6 meses vencido
+                risk_level = 'muy_alto'
+                points = factor_weights['revision_vencida']
+            elif days_overdue > 90:  # Más de 3 meses vencido
+                risk_level = 'alto'
+                points = int(factor_weights['revision_vencida'] * 0.75)
+            elif days_overdue > 30:  # Más de 1 mes vencido
+                risk_level = 'medio'
+                points = int(factor_weights['revision_vencida'] * 0.5)
+            else:
+                risk_level = 'bajo'
+                points = int(factor_weights['revision_vencida'] * 0.25)
+                
+            risk_score += points
+            risk_factors.append({
+                'factor': 'revision_vencida',
+                'descripcion': f'Revisión KYC vencida hace {days_overdue} días',
+                'nivel_riesgo': risk_level,
+                'puntos': points
+            })
+        
+        # Factor 5: Clasificación FATCA
+        if client['clasificacion_fatca'] and 'recalcitrante' in client['clasificacion_fatca'].lower():
+            points = factor_weights['clasificacion_fatca']
+            risk_score += points
+            risk_factors.append({
+                'factor': 'clasificacion_fatca',
+                'descripcion': f'Clasificación FATCA: {client["clasificacion_fatca"]}',
+                'nivel_riesgo': 'alto',
+                'puntos': points
+            })
+        
+        # Factor 6: Tipo de cliente
+        if client['tipo_cliente'] == 'empresa':
+            points = int(factor_weights['tipo_cliente'] * 0.5)
+            risk_score += points
+            risk_factors.append({
+                'factor': 'tipo_cliente',
+                'descripcion': 'Cliente empresarial',
+                'nivel_riesgo': 'medio',
+                'puntos': points
+            })
+        
+        # Factor 7: Segmento bancario
+        if client['segmento_bancario'] in ['corporativa', 'institucional']:
+            points = factor_weights['segmento']
+            risk_score += points
+            risk_factors.append({
+                'factor': 'segmento',
+                'descripcion': f'Segmento bancario: {client["segmento_bancario"]}',
+                'nivel_riesgo': 'medio',
+                'puntos': points
+            })
+        
+        # Factor 8: Verificar confianza en los documentos
+        docs_query = """
+        SELECT AVG(d.confianza_extraccion) as confianza_promedio,
+               COUNT(*) as total_docs,
+               SUM(CASE WHEN d.validado_manualmente = 1 THEN 1 ELSE 0 END) as docs_validados
+        FROM documentos_clientes dc
+        JOIN documentos d ON dc.id_documento = d.id_documento
+        WHERE dc.id_cliente = %s AND d.estado = 'publicado'
+        """
+        
+        docs_info = execute_query(docs_query, (client_id,))
+        
+        if docs_info and docs_info[0]['total_docs'] > 0:
+            confianza_promedio = docs_info[0]['confianza_promedio'] or 0
+            total_docs = docs_info[0]['total_docs']
+            docs_validados = docs_info[0]['docs_validados']
+            
+            if confianza_promedio < 0.7 and docs_validados / total_docs < 0.5:
+                points = factor_weights['confianza_documentos']
+                risk_score += points
+                risk_factors.append({
+                    'factor': 'confianza_documentos',
+                    'descripcion': f'Baja confianza en documentos (promedio: {confianza_promedio:.2f})',
+                    'nivel_riesgo': 'medio',
+                    'puntos': points
+                })
+        
+        # Calcular nivel de riesgo basado en puntuación
+        calculated_risk = 'bajo'
+        max_possible_score = sum(factor_weights.values())
+        risk_percentage = (risk_score / max_possible_score) * 100
+        
+        if risk_percentage >= 75:
+            calculated_risk = 'muy_alto'
+        elif risk_percentage >= 50:
+            calculated_risk = 'alto'
+        elif risk_percentage >= 25:
+            calculated_risk = 'medio'
+        else:
+            calculated_risk = 'bajo'
+        
+        # Generar recomendaciones
+        recommendations = []
+        
+        if completeness['porcentaje_completitud'] < 100:
+            recommendations.append('Completar la documentación faltante')
+        
+        if completeness['documentos_vencidos'] > 0:
+            recommendations.append('Actualizar documentos vencidos')
+        
+        if client['proxima_revision_kyc'] and client['proxima_revision_kyc'] < datetime.datetime.now().date():
+            recommendations.append('Realizar revisión KYC pendiente')
+        
+        # Resultado
+        result = {
+            'nivel_riesgo_calculado': calculated_risk,
+            'puntuacion_riesgo': risk_score,
+            'porcentaje_riesgo': round(risk_percentage, 2),
+            'nivel_riesgo_actual': current_risk,
+            'cambio_recomendado': calculated_risk != current_risk,
+            'factores_riesgo': risk_factors,
+            'recomendaciones': recommendations
+        }
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error en cálculo de riesgo: {str(e)}")
+        return {
+            'nivel_riesgo_calculado': 'error',
+            'puntuacion_riesgo': 0,
+            'factores_riesgo': [],
+            'recomendaciones': [],
+            'error': str(e)
+        }
+
+
+
+def track_document_request(event, context):
+    """Seguimiento de solicitudes de documentos para un cliente específico"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado,
+               gestor_principal_id, gestor_kyc_id
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        
+        if not client_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        
+        # Verificar permisos - el usuario debe ser gestor del cliente o tener permiso admin
+        is_admin_query = """
+        SELECT COUNT(*) as is_admin
+        FROM usuarios_roles ur
+        JOIN roles_permisos rp ON ur.id_rol = rp.id_rol
+        JOIN permisos p ON rp.id_permiso = p.id_permiso
+        WHERE ur.id_usuario = %s AND p.codigo_permiso IN ('admin.clientes', 'admin.documentos')
+        """
+        
+        is_admin_result = execute_query(is_admin_query, (user_id,))
+        is_admin = is_admin_result[0]['is_admin'] > 0 if is_admin_result else False
+        
+        if not is_admin and client['gestor_principal_id'] != user_id and client['gestor_kyc_id'] != user_id:
+            return {
+                'statusCode': 403,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'No tiene permisos para acceder a esta información'})
+            }
+        
+        # Obtener parámetros de consulta
+        query_params = event.get('queryStringParameters', {}) or {}
+        
+        # Filtros
+        estado = query_params.get('estado')
+        dias_limite = query_params.get('dias_limite')  # Para filtrar por días restantes hasta la fecha límite
+        fecha_inicio = query_params.get('fecha_inicio')
+        fecha_fin = query_params.get('fecha_fin')
+        
+        # Construir consulta para el seguimiento de solicitudes
+        query = """
+        SELECT ds.id_solicitud, ds.id_cliente, ds.id_tipo_documento, ds.fecha_solicitud,
+               ds.solicitado_por, u_solicitante.nombre_usuario as solicitado_por_nombre,
+               ds.fecha_limite, ds.estado, ds.id_documento_recibido, ds.notas,
+               td.nombre_tipo as tipo_documento_nombre,
+               DATEDIFF(ds.fecha_limite, CURDATE()) as dias_restantes,
+               CASE WHEN ds.fecha_limite < CURDATE() AND ds.estado IN ('pendiente', 'recordatorio_enviado') 
+                    THEN 1 ELSE 0 END as vencido
+        FROM documentos_solicitados ds
+        JOIN tipos_documento td ON ds.id_tipo_documento = td.id_tipo_documento
+        JOIN usuarios u_solicitante ON ds.solicitado_por = u_solicitante.id_usuario
+        WHERE ds.id_cliente = %s
+        """
+        
+        params = [client_id]
+        
+        # Aplicar filtros
+        if estado:
+            query += " AND ds.estado = %s"
+            params.append(estado)
+        
+        if dias_limite:
+            query += " AND DATEDIFF(ds.fecha_limite, CURDATE()) <= %s"
+            params.append(int(dias_limite))
+        
+        if fecha_inicio:
+            query += " AND ds.fecha_solicitud >= %s"
+            params.append(fecha_inicio)
+        
+        if fecha_fin:
+            query += " AND ds.fecha_solicitud <= %s"
+            params.append(fecha_fin)
+        
+        # Ordenar por estado (pendientes primero) y fecha límite (más cercanos primero)
+        query += """ 
+        ORDER BY 
+            CASE ds.estado 
+                WHEN 'pendiente' THEN 1 
+                WHEN 'recordatorio_enviado' THEN 2 
+                WHEN 'recibido' THEN 3 
+                WHEN 'cancelado' THEN 4 
+            END,
+            ds.fecha_limite
+        """
+        
+        # Ejecutar consulta
+        requests = execute_query(query, params)
+        
+        # Procesar resultados
+        for req in requests:
+            # Convertir fechas para JSON
+            if 'fecha_solicitud' in req and req['fecha_solicitud']:
+                req['fecha_solicitud'] = req['fecha_solicitud'].isoformat()
+            if 'fecha_limite' in req and req['fecha_limite']:
+                req['fecha_limite'] = req['fecha_limite'].isoformat()
+        
+        # Obtener estadísticas de seguimiento
+        stats_query = """
+        SELECT 
+            COUNT(*) as total_solicitudes,
+            SUM(CASE WHEN estado = 'pendiente' THEN 1 ELSE 0 END) as pendientes,
+            SUM(CASE WHEN estado = 'recordatorio_enviado' THEN 1 ELSE 0 END) as recordatorios,
+            SUM(CASE WHEN estado = 'recibido' THEN 1 ELSE 0 END) as recibidos,
+            SUM(CASE WHEN estado = 'cancelado' THEN 1 ELSE 0 END) as cancelados,
+            SUM(CASE WHEN fecha_limite < CURDATE() AND estado IN ('pendiente', 'recordatorio_enviado') 
+                     THEN 1 ELSE 0 END) as vencidos,
+            AVG(CASE WHEN estado = 'recibido' 
+                    THEN DATEDIFF(CASE WHEN id_documento_recibido IS NOT NULL 
+                                      THEN (SELECT fecha_creacion FROM versiones_documento 
+                                            WHERE id_documento = id_documento_recibido ORDER BY numero_version LIMIT 1)
+                                  ELSE CURDATE() END, fecha_solicitud)
+                 END) as promedio_dias_respuesta
+        FROM documentos_solicitados
+        WHERE id_cliente = %s
+        """
+        
+        stats_result = execute_query(stats_query, (client_id,))
+        stats = stats_result[0] if stats_result else {}
+        
+        # Obtener historia y tendencias de cumplimiento de solicitudes
+        # Últimos 6 meses
+        timeline_query = """
+        SELECT 
+            DATE_FORMAT(fecha_solicitud, '%Y-%m-01') as mes,
+            COUNT(*) as total_solicitudes,
+            SUM(CASE WHEN estado = 'recibido' THEN 1 ELSE 0 END) as completadas,
+            SUM(CASE WHEN fecha_limite < CURDATE() AND estado IN ('pendiente', 'recordatorio_enviado') 
+                     THEN 1 ELSE 0 END) as vencidas
+        FROM documentos_solicitados
+        WHERE id_cliente = %s
+        AND fecha_solicitud >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+        GROUP BY DATE_FORMAT(fecha_solicitud, '%Y-%m-01')
+        ORDER BY mes
+        """
+        
+        timeline = execute_query(timeline_query, (client_id,))
+        
+        # Crear respuesta
+        response = {
+            'cliente': {
+                'id': client_id,
+                'codigo': client['codigo_cliente'],
+                'nombre': client['nombre_razon_social']
+            },
+            'solicitudes': requests,
+            'estadisticas': stats,
+            'tendencia_temporal': timeline
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener seguimiento de solicitudes: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener seguimiento de solicitudes: {str(e)}'})
+        }
+
