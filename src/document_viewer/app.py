@@ -328,28 +328,116 @@ def get_document_preview(event, doc_id):
             }
         
         # Verificar si hay miniaturas generadas
-        if not version['miniaturas_generadas']:
-            return {
-                'statusCode': 404,
-                'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                'body': json.dumps({'error': 'No hay miniaturas disponibles para este documento'})
-            }
-        
-        # Construir la ruta de la miniatura basada en la ruta del documento
-        thumbnail_path = ""
-        if version['ubicacion_almacenamiento_tipo'] == 's3':
-            # Asumir convención de nomenclatura para miniaturas
-            doc_path = version['ubicacion_almacenamiento_ruta']
-            thumbnail_path = f"{os.path.splitext(doc_path)[0]}_thumbnail.jpg"
-            
+        if not version.get('miniaturas_generadas', False):
+            # Si no hay miniaturas, programar su generación
             try:
+                sqs_client = boto3.client('sqs')
+                THUMBNAILS_QUEUE_URL = os.environ.get('THUMBNAILS_QUEUE_URL')
+                
+                if THUMBNAILS_QUEUE_URL:
+                    # Extraer correctamente bucket y key de la ruta
+                    storage_path = version['ubicacion_almacenamiento_ruta']
+                    
+                    # Verificar si ya contiene el nombre del bucket
+                    if '/' in storage_path:
+                        parts = storage_path.split('/', 1)
+                        bucket = parts[0]
+                        key = parts[1]
+                    else:
+                        # Si no tiene formato "bucket/key", usar BUCKET_NAME predeterminado
+                        bucket = BUCKET_NAME
+                        key = storage_path
+                    
+                    # Crear mensaje para generar miniaturas
+                    message = {
+                        'document_id': doc_id,
+                        'version_id': version['id_version'],
+                        'bucket': bucket,
+                        'key': key,
+                        'extension': version['extension'],
+                        'mime_type': version['mime_type']
+                    }
+                    
+                    # Enviar mensaje a SQS
+                    sqs_client.send_message(
+                        QueueUrl=THUMBNAILS_QUEUE_URL,
+                        MessageBody=json.dumps(message)
+                    )
+                    
+                    logger.info(f"Generación de miniaturas programada para documento {doc_id}")
+            except Exception as e:
+                logger.error(f"Error al programar generación de miniaturas: {str(e)}")
+            
+            # Devolver URL para el documento original
+            try:
+                # Extraer correctamente bucket y key
+                storage_path = version['ubicacion_almacenamiento_ruta']
+                
+                if '/' in storage_path:
+                    parts = storage_path.split('/', 1)
+                    bucket = parts[0]
+                    key = parts[1]
+                else:
+                    bucket = BUCKET_NAME
+                    key = storage_path
+                
+                # Generar URL firmada para el documento original
+                url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={
+                        'Bucket': bucket,
+                        'Key': key,
+                        'ResponseContentType': version['mime_type'],
+                        'ResponseContentDisposition': f'inline; filename="{version["nombre_original"]}"'
+                    },
+                    ExpiresIn=URL_EXPIRATION
+                )
+                
+                # Registrar acceso en auditoría
+                ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
+                log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+                
+                return {
+                    'statusCode': 200,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                    'body': json.dumps({
+                        'url': url,
+                        'mime_type': version['mime_type'],
+                        'nombre_archivo': version['nombre_original'],
+                        'tamano_bytes': version['tamano_bytes'],
+                        'expiracion_url': URL_EXPIRATION
+                    })
+                }
+            except ClientError as e:
+                logger.error(f"Error al generar URL del documento original: {str(e)}")
+                return {
+                    'statusCode': 404,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                    'body': json.dumps({'error': 'Documento no encontrado'})
+                }
+        
+        # Si hay miniaturas generadas, usar la ubicación específica
+        thumbnail_path = version.get('ubicacion_miniatura')
+        
+        if thumbnail_path:
+            try:
+                # Extraer correctamente bucket y key
+                if '/' in thumbnail_path:
+                    parts = thumbnail_path.split('/', 1)
+                    bucket = parts[0]
+                    key = parts[1]
+                else:
+                    bucket = BUCKET_NAME
+                    key = thumbnail_path
+                
                 # Generar URL firmada para la miniatura
                 url = s3_client.generate_presigned_url(
                     'get_object',
                     Params={
-                        'Bucket': BUCKET_NAME,
-                        'Key': thumbnail_path,
-                        'ResponseContentType': 'image/jpeg'
+                        'Bucket': bucket,
+                        'Key': key,
+                        'ResponseContentType': 'image/jpeg',
+                        'ResponseContentDisposition': f'inline; filename="{os.path.basename(key)}"'
                     },
                     ExpiresIn=URL_EXPIRATION
                 )
@@ -364,21 +452,61 @@ def get_document_preview(event, doc_id):
                     'body': json.dumps({
                         'url': url,
                         'mime_type': 'image/jpeg',
+                        'nombre_archivo': f"{os.path.basename(key)}",
+                        'es_miniatura': True,
                         'expiracion_url': URL_EXPIRATION
                     })
                 }
             except ClientError as e:
                 logger.error(f"Error al generar URL de miniatura: {str(e)}")
-                return {
-                    'statusCode': 404,
-                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': 'Miniatura no encontrada'})
-                }
-        else:
+                # Caer en el siguiente bloque para intentar con el documento original
+        
+        # Si llegamos aquí, intentamos con el documento original
+        try:
+            # Extraer correctamente bucket y key
+            storage_path = version['ubicacion_almacenamiento_ruta']
+            
+            if '/' in storage_path:
+                parts = storage_path.split('/', 1)
+                bucket = parts[0]
+                key = parts[1]
+            else:
+                bucket = BUCKET_NAME
+                key = storage_path
+            
+            # Generar URL firmada para el documento original
+            url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket,
+                    'Key': key,
+                    'ResponseContentType': version['mime_type'],
+                    'ResponseContentDisposition': f'inline; filename="{version["nombre_original"]}"'
+                },
+                ExpiresIn=URL_EXPIRATION
+            )
+            
+            # Registrar acceso en auditoría
+            ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
+            log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+            
             return {
-                'statusCode': 400,
+                'statusCode': 200,
                 'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                'body': json.dumps({'error': f'Tipo de almacenamiento no soportado: {version["ubicacion_almacenamiento_tipo"]}'})
+                'body': json.dumps({
+                    'url': url,
+                    'mime_type': version['mime_type'],
+                    'nombre_archivo': version['nombre_original'],
+                    'tamano_bytes': version['tamano_bytes'],
+                    'expiracion_url': URL_EXPIRATION
+                })
+            }
+        except ClientError as e:
+            logger.error(f"Error al generar URL del documento original: {str(e)}")
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Documento no encontrado'})
             }
     
     except Exception as e:
@@ -388,7 +516,7 @@ def get_document_preview(event, doc_id):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener vista previa del documento: {str(e)}'})
         }
-
+      
 def generate_download_url(event, doc_id):
     """Genera una URL para descarga del documento"""
     try:

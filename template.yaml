@@ -720,6 +720,8 @@ Resources:
         - VPCAccessPolicy: {}
         - S3ReadPolicy:
             BucketName: !Ref DocumentsBucket
+        - S3ReadPolicy:
+            BucketName: "gestor-documental-bancario-documents-processed"
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
