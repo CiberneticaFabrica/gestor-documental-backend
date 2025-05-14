@@ -136,7 +136,7 @@ def validate_session(event, required_permission=None):
     return user_id, None
 
 def list_folders(event, context):
-    """Lista la estructura jerárquica de carpetas"""
+    """Lista la estructura jerárquica de carpetas con sus documentos"""
     try:
         # Validar sesión
         user_id, error_response = validate_session(event, 'carpetas.ver')
@@ -154,6 +154,9 @@ def list_folders(event, context):
         
         # Parámetro para incluir estadísticas de carpetas
         include_stats = query_params.get('include_stats', 'false').lower() == 'true'
+        
+        # Nuevo parámetro para incluir documentos
+        include_documents = query_params.get('include_documents', 'true').lower() == 'true'
         
         # Construir consulta base
         query = """
@@ -205,26 +208,84 @@ def list_folders(event, context):
         # Ejecutar consulta
         folders = execute_query(query, params)
         
-        # Procesar resultados
+        # Obtener la lista de IDs de carpetas para consultar documentos
+        folder_ids = [folder['id_carpeta'] for folder in folders]
+        
+        # Inicializar diccionario para almacenar documentos por carpeta
+        documents_by_folder = {}
+        
+        # Si se solicita incluir documentos y hay carpetas en el resultado
+        if include_documents and folder_ids:
+            # Consulta para obtener documentos de todas las carpetas a la vez
+            placeholders = ", ".join(["%s"] * len(folder_ids))
+            docs_query = f"""
+            SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
+                   d.id_tipo_documento, td.nombre_tipo as tipo_documento,
+                   d.version_actual, d.fecha_creacion, d.fecha_modificacion,
+                   d.id_carpeta, d.estado, d.tags, 
+                   u_creador.nombre_usuario as creado_por_usuario,
+                   u_modificador.nombre_usuario as modificado_por_usuario
+            FROM documentos d
+            JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+            JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
+            JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
+            WHERE d.id_carpeta IN ({placeholders}) AND d.estado != 'eliminado'
+            ORDER BY d.fecha_modificacion DESC
+            """
+            
+            documents = execute_query(docs_query, folder_ids)
+            
+            # Procesar documentos y agruparlos por carpeta
+            for doc in documents:
+                # Convertir datetime a string
+                if 'fecha_creacion' in doc and doc['fecha_creacion']:
+                    doc['fecha_creacion'] = doc['fecha_creacion'].isoformat()
+                if 'fecha_modificacion' in doc and doc['fecha_modificacion']:
+                    doc['fecha_modificacion'] = doc['fecha_modificacion'].isoformat()
+                
+                # Procesar tags (JSON)
+                if 'tags' in doc and doc['tags']:
+                    try:
+                        doc['tags'] = json.loads(doc['tags'])
+                    except:
+                        doc['tags'] = []
+                
+                # Agrupar por carpeta
+                folder_id = doc['id_carpeta']
+                if folder_id not in documents_by_folder:
+                    documents_by_folder[folder_id] = []
+                documents_by_folder[folder_id].append(doc)
+        
+        # Procesar resultados de carpetas
         for folder in folders:
             # Convertir datetime a string
             if 'fecha_creacion' in folder and folder['fecha_creacion']:
                 folder['fecha_creacion'] = folder['fecha_creacion'].isoformat()
             if 'fecha_modificacion' in folder and folder['fecha_modificacion']:
                 folder['fecha_modificacion'] = folder['fecha_modificacion'].isoformat()
+            
+            # Añadir documentos si se solicitaron
+            if include_documents:
+                folder['documentos'] = documents_by_folder.get(folder['id_carpeta'], [])
         
         # Incluir estadísticas si se solicita
         if include_stats:
             for folder in folders:
-                # Contar documentos en la carpeta
-                docs_query = """
-                SELECT COUNT(*) as document_count
-                FROM documentos
-                WHERE id_carpeta = %s AND estado != 'eliminado'
-                """
+                folder_id = folder['id_carpeta']
                 
-                docs_result = execute_query(docs_query, (folder['id_carpeta'],))
-                folder['document_count'] = docs_result[0]['document_count'] if docs_result else 0
+                # Si ya tenemos los documentos, usar la longitud en lugar de hacer otra consulta
+                if include_documents:
+                    folder['document_count'] = len(documents_by_folder.get(folder_id, []))
+                else:
+                    # Contar documentos en la carpeta
+                    docs_query = """
+                    SELECT COUNT(*) as document_count
+                    FROM documentos
+                    WHERE id_carpeta = %s AND estado != 'eliminado'
+                    """
+                    
+                    docs_result = execute_query(docs_query, (folder_id,))
+                    folder['document_count'] = docs_result[0]['document_count'] if docs_result else 0
                 
                 # Contar subcarpetas
                 subfolders_query = """
@@ -233,7 +294,7 @@ def list_folders(event, context):
                 WHERE carpeta_padre_id = %s
                 """
                 
-                subfolders_result = execute_query(subfolders_query, (folder['id_carpeta'],))
+                subfolders_result = execute_query(subfolders_query, (folder_id,))
                 folder['subfolder_count'] = subfolders_result[0]['subfolder_count'] if subfolders_result else 0
         
         # Construir estructura jerárquica si no se solicitan solo carpetas raíz
@@ -278,6 +339,150 @@ def list_folders(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar carpetas: {str(e)}'})
         }
+
+# def list_folders(event, context):
+#     """Lista la estructura jerárquica de carpetas"""
+#     try:
+#         # Validar sesión
+#         user_id, error_response = validate_session(event, 'carpetas.ver')
+#         if error_response:
+#             return error_response
+        
+#         # Obtener parámetros de consulta
+#         query_params = event.get('queryStringParameters', {}) or {}
+        
+#         # Parámetro para listar solo carpetas de primer nivel
+#         only_root = query_params.get('root_only', 'false').lower() == 'true'
+        
+#         # Filtro de búsqueda para nombres de carpeta
+#         search = query_params.get('search')
+        
+#         # Parámetro para incluir estadísticas de carpetas
+#         include_stats = query_params.get('include_stats', 'false').lower() == 'true'
+        
+#         # Construir consulta base
+#         query = """
+#         SELECT c.id_carpeta, c.nombre_carpeta, c.descripcion, 
+#                c.carpeta_padre_id, c.ruta_completa, c.id_propietario,
+#                c.fecha_creacion, c.fecha_modificacion,
+#                u.nombre_usuario as propietario_nombre
+#         FROM carpetas c
+#         LEFT JOIN usuarios u ON c.id_propietario = u.id_usuario
+#         WHERE 1=1
+#         """
+        
+#         params = []
+        
+#         # Filtrar por carpetas accesibles para el usuario
+#         access_query = """
+#         AND (
+#             c.id_propietario = %s
+#             OR c.id_carpeta IN (
+#                 SELECT pc.id_carpeta 
+#                 FROM permisos_carpetas pc 
+#                 WHERE (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario')
+#                 OR (pc.id_entidad IN (
+#                     SELECT g.id_grupo 
+#                     FROM usuarios_grupos ug 
+#                     JOIN grupos g ON ug.id_grupo = g.id_grupo 
+#                     WHERE ug.id_usuario = %s
+#                 ) AND pc.tipo_entidad = 'grupo')
+#             )
+#         )
+#         """
+        
+#         query += access_query
+#         params.extend([user_id, user_id, user_id])
+        
+#         # Filtrar solo carpetas raíz si se solicita
+#         if only_root:
+#             query += " AND c.carpeta_padre_id IS NULL"
+        
+#         # Filtrar por búsqueda si se proporciona
+#         if search:
+#             query += " AND (c.nombre_carpeta LIKE %s OR c.descripcion LIKE %s)"
+#             search_param = f"%{search}%"
+#             params.extend([search_param, search_param])
+        
+#         # Ordenar por ruta
+#         query += " ORDER BY c.ruta_completa"
+        
+#         # Ejecutar consulta
+#         folders = execute_query(query, params)
+        
+#         # Procesar resultados
+#         for folder in folders:
+#             # Convertir datetime a string
+#             if 'fecha_creacion' in folder and folder['fecha_creacion']:
+#                 folder['fecha_creacion'] = folder['fecha_creacion'].isoformat()
+#             if 'fecha_modificacion' in folder and folder['fecha_modificacion']:
+#                 folder['fecha_modificacion'] = folder['fecha_modificacion'].isoformat()
+        
+#         # Incluir estadísticas si se solicita
+#         if include_stats:
+#             for folder in folders:
+#                 # Contar documentos en la carpeta
+#                 docs_query = """
+#                 SELECT COUNT(*) as document_count
+#                 FROM documentos
+#                 WHERE id_carpeta = %s AND estado != 'eliminado'
+#                 """
+                
+#                 docs_result = execute_query(docs_query, (folder['id_carpeta'],))
+#                 folder['document_count'] = docs_result[0]['document_count'] if docs_result else 0
+                
+#                 # Contar subcarpetas
+#                 subfolders_query = """
+#                 SELECT COUNT(*) as subfolder_count
+#                 FROM carpetas
+#                 WHERE carpeta_padre_id = %s
+#                 """
+                
+#                 subfolders_result = execute_query(subfolders_query, (folder['id_carpeta'],))
+#                 folder['subfolder_count'] = subfolders_result[0]['subfolder_count'] if subfolders_result else 0
+        
+#         # Construir estructura jerárquica si no se solicitan solo carpetas raíz
+#         if not only_root:
+#             # Construir un mapa de carpetas por ID
+#             folders_map = {folder['id_carpeta']: folder for folder in folders}
+            
+#             # Añadir campo para subcarpetas
+#             for folder in folders:
+#                 folder['subcarpetas'] = []
+            
+#             # Construir jerarquía
+#             root_folders = []
+#             for folder in folders:
+#                 parent_id = folder['carpeta_padre_id']
+#                 if parent_id is None:
+#                     # Es una carpeta raíz
+#                     root_folders.append(folder)
+#                 elif parent_id in folders_map:
+#                     # Añadir como subcarpeta
+#                     folders_map[parent_id]['subcarpetas'].append(folder)
+            
+#             # Devolver solo las carpetas raíz con su jerarquía
+#             response = {
+#                 'carpetas': root_folders
+#             }
+#         else:
+#             response = {
+#                 'carpetas': folders
+#             }
+        
+#         return {
+#             'statusCode': 200,
+#             'headers': add_cors_headers({'Content-Type': 'application/json'}),
+#             'body': json.dumps(response, default=str)
+#         }
+        
+#     except Exception as e:
+#         logger.error(f"Error al listar carpetas: {str(e)}")
+#         return {
+#             'statusCode': 500,
+#             'headers': add_cors_headers({'Content-Type': 'application/json'}),
+#             'body': json.dumps({'error': f'Error al listar carpetas: {str(e)}'})
+#         }
 
 def list_folder_documents(event, context):
     """Lista documentos dentro de una carpeta específica"""
