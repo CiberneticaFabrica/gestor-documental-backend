@@ -36,7 +36,7 @@ def lambda_handler(event, context):
             return list_clients(event, context)
         elif http_method == 'POST' and path == '/clients':
             return create_client(event, context)
-        elif http_method == 'GET' and path.startswith('/clients/') and not path.endswith('/documents') and not path.endswith('/requests'):
+        elif http_method == 'GET' and path.startswith('/clients/') and not path.endswith('/documents') and not path.endswith('/requests') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/requests') and not path.endswith('/documents/expiring'):
             client_id = path.split('/')[2]
             event['pathParameters'] = {'id': client_id}
             return get_client(event, context)
@@ -3505,18 +3505,18 @@ def track_document_request(event, context):
         # Últimos 6 meses
         timeline_query = """
         SELECT 
-            DATE_FORMAT(fecha_solicitud, '%Y-%m-01') as mes,
+            DATE_FORMAT(fecha_solicitud, '%%Y-%%m-01') as mes,
             COUNT(*) as total_solicitudes,
             SUM(CASE WHEN estado = 'recibido' THEN 1 ELSE 0 END) as completadas,
             SUM(CASE WHEN fecha_limite < CURDATE() AND estado IN ('pendiente', 'recordatorio_enviado') 
-                     THEN 1 ELSE 0 END) as vencidas
+                    THEN 1 ELSE 0 END) as vencidas
         FROM documentos_solicitados
         WHERE id_cliente = %s
         AND fecha_solicitud >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
-        GROUP BY DATE_FORMAT(fecha_solicitud, '%Y-%m-01')
+        GROUP BY DATE_FORMAT(fecha_solicitud, '%%Y-%%m-01')
         ORDER BY mes
         """
-        
+
         timeline = execute_query(timeline_query, (client_id,))
         
         # Crear respuesta
