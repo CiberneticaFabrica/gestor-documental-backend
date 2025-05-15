@@ -163,28 +163,39 @@ def list_documents(event, context):
         document_type = query_params.get('tipo_documento')
         status = query_params.get('estado')
         folder_id = query_params.get('id_carpeta')
+        client_id = query_params.get('id_cliente')  # Added client filter
         tags = query_params.get('tags')
         
-        # Base query
+        # Base query - expanded to include client information and more relevant data
         query = """
         SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
                d.id_tipo_documento, td.nombre_tipo as tipo_documento,
                d.version_actual, d.fecha_creacion, d.fecha_modificacion,
-               d.id_carpeta, c.nombre_carpeta, d.estado, d.tags, 
+               d.id_carpeta, c.nombre_carpeta, d.estado, d.tags, d.metadatos,
+               d.confianza_extraccion, d.validado_manualmente,
                u_creador.nombre_usuario as creado_por_usuario,
-               u_modificador.nombre_usuario as modificado_por_usuario
+               u_modificador.nombre_usuario as modificado_por_usuario,
+               dc.id_cliente, cl.nombre_razon_social as cliente_nombre,
+               cl.codigo_cliente, cl.tipo_cliente,
+               cl.segmento_bancario, cl.nivel_riesgo,
+               v.hash_contenido, v.tamano_bytes, v.mime_type, v.nombre_original,
+               v.extension
         FROM documentos d
         JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
         LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
         JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
         JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
+        LEFT JOIN versiones_documento v ON d.id_documento = v.id_documento AND v.numero_version = d.version_actual
+        LEFT JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
+        LEFT JOIN clientes cl ON dc.id_cliente = cl.id_cliente
         """
         
         count_query = """
-        SELECT COUNT(*) as total 
+        SELECT COUNT(DISTINCT d.id_documento) as total 
         FROM documentos d
         JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
         LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
+        LEFT JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
         """
         
         # Build where clauses
@@ -231,6 +242,11 @@ def list_documents(event, context):
         if folder_id:
             where_clauses.append("d.id_carpeta = %s")
             params.append(folder_id)
+            
+        # Client filter
+        if client_id:
+            where_clauses.append("dc.id_cliente = %s")
+            params.append(client_id)
         
         # Tags filter (JSON contains)
         if tags:
@@ -268,15 +284,79 @@ def list_documents(event, context):
                 doc['fecha_modificacion'] = doc['fecha_modificacion'].isoformat()
             
             # Parse JSON fields
-            if 'tags' in doc and doc['tags']:
-                try:
-                    doc['tags'] = json.loads(doc['tags'])
-                except:
-                    doc['tags'] = []
+            json_fields = ['tags', 'metadatos']
+            for field in json_fields:
+                if field in doc and doc[field]:
+                    try:
+                        doc[field] = json.loads(doc[field])
+                    except:
+                        doc[field] = [] if field == 'tags' else {}
+            
+            # Get IA analysis if available
+            if 'id_documento' in doc:
+                analysis_query = """
+                SELECT id_analisis, tipo_documento, confianza_clasificacion,
+                       estado_analisis, fecha_analisis, verificado
+                FROM analisis_documento_ia
+                WHERE id_documento = %s
+                ORDER BY fecha_analisis DESC
+                LIMIT 1
+                """
+                
+                analysis_result = execute_query(analysis_query, (doc['id_documento'],))
+                if analysis_result:
+                    doc['analisis_ia'] = {
+                        'id_analisis': analysis_result[0]['id_analisis'],
+                        'tipo_documento': analysis_result[0]['tipo_documento'],
+                        'confianza': analysis_result[0]['confianza_clasificacion'],
+                        'estado': analysis_result[0]['estado_analisis'],
+                        'verificado': analysis_result[0]['verificado']
+                    }
+                    
+                    if analysis_result[0]['fecha_analisis']:
+                        doc['analisis_ia']['fecha'] = analysis_result[0]['fecha_analisis'].isoformat()
+            
+            # Add additional client data if associated
+            if doc.get('id_cliente'):
+                # Check if there are any active requests for this document
+                request_query = """
+                SELECT COUNT(*) as count
+                FROM documentos_solicitados
+                WHERE id_cliente = %s AND id_documento_recibido = %s
+                """
+                
+                request_result = execute_query(request_query, (doc['id_cliente'], doc['id_documento']))
+                doc['fue_solicitado'] = request_result[0]['count'] > 0 if request_result else False
+                
+                # Add client document category if available
+                category_query = """
+                SELECT cat.id_categoria, cat.nombre_categoria
+                FROM categorias_documento_cliente cat
+                JOIN documentos d ON d.id_tipo_documento = %s
+                WHERE d.id_documento = %s
+                LIMIT 1
+                """
+                
+                category_result = execute_query(category_query, (doc['id_tipo_documento'], doc['id_documento']))
+                if category_result:
+                    doc['categoria_cliente'] = {
+                        'id': category_result[0]['id_categoria'],
+                        'nombre': category_result[0]['nombre_categoria']
+                    }
         
-        # Prepare response with pagination metadata
+        # Get document types for filter options
+        doc_types_query = """
+        SELECT id_tipo_documento, nombre_tipo
+        FROM tipos_documento
+        ORDER BY nombre_tipo
+        """
+        
+        doc_types = execute_query(doc_types_query)
+        
+        # Prepare response with pagination metadata and filter options
         response = {
             'documentos': documents,
+            'tipos_documento': doc_types,
             'pagination': {
                 'total': total_documents,
                 'page': page,
@@ -310,7 +390,7 @@ def get_document(event, context):
         # Get document ID
         doc_id = event['pathParameters']['id']
         
-        # Get document details
+        # Get document details with client information
         query = """
         SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
                d.id_tipo_documento, td.nombre_tipo as tipo_documento,
@@ -327,13 +407,22 @@ def get_document(event, context):
                v.ubicacion_almacenamiento_ruta as ruta_archivo,
                v.ubicacion_almacenamiento_tipo as tipo_almacenamiento,
                v.mime_type, v.tamano_bytes,
-               v.nombre_original, v.extension
+               v.nombre_original, v.extension,
+               dc.id_cliente, cl.nombre_razon_social as cliente_nombre,
+               cl.codigo_cliente, cl.tipo_cliente, cl.documento_identificacion,
+               cl.segmento_bancario, cl.nivel_riesgo, cl.estado_documental,
+               cl.gestor_principal_id, u_gestor.nombre_usuario as gestor_nombre,
+               dc.fecha_asignacion, u_asignador.nombre_usuario as asignado_por_nombre
         FROM documentos d
         JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
         LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
         JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
         JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
         LEFT JOIN versiones_documento v ON d.id_documento = v.id_documento AND v.numero_version = d.version_actual
+        LEFT JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
+        LEFT JOIN clientes cl ON dc.id_cliente = cl.id_cliente
+        LEFT JOIN usuarios u_gestor ON cl.gestor_principal_id = u_gestor.id_usuario
+        LEFT JOIN usuarios u_asignador ON dc.asignado_por = u_asignador.id_usuario
         WHERE d.id_documento = %s
         """
         
@@ -380,7 +469,7 @@ def get_document(event, context):
                 try:
                     document[field] = json.loads(document[field])
                 except:
-                    document[field] = {}
+                    document[field] = {} if field != 'tags' else []
         
         # Get document versions count
         versions_query = """
@@ -428,11 +517,253 @@ def get_document(event, context):
         references = execute_query(references_query, (doc_id, doc_id))
         document['documentos_relacionados'] = references
         
+        # Get IA analysis details if available
+        analysis_query = """
+        SELECT id_analisis, tipo_documento, confianza_clasificacion,
+               estado_analisis, fecha_analisis, verificado, verificado_por,
+               texto_extraido, entidades_detectadas, metadatos_extraccion
+        FROM analisis_documento_ia
+        WHERE id_documento = %s
+        ORDER BY fecha_analisis DESC
+        LIMIT 1
+        """
+        
+        analysis_result = execute_query(analysis_query, (doc_id,))
+        if analysis_result:
+            analysis = analysis_result[0]
+            
+            # Process JSON fields in analysis
+            json_analysis_fields = ['entidades_detectadas', 'metadatos_extraccion']
+            for field in json_analysis_fields:
+                if field in analysis and analysis[field]:
+                    try:
+                        analysis[field] = json.loads(analysis[field])
+                    except:
+                        analysis[field] = {}
+            
+            # Format dates
+            if 'fecha_analisis' in analysis and analysis['fecha_analisis']:
+                analysis['fecha_analisis'] = analysis['fecha_analisis'].isoformat()
+            
+            # Truncate text if too long
+            if 'texto_extraido' in analysis and analysis['texto_extraido'] and len(analysis['texto_extraido']) > 1000:
+                analysis['texto_extraido_preview'] = analysis['texto_extraido'][:1000] + "... (truncated)"
+                # Keep full text in separate field if needed
+                analysis['texto_extraido_full'] = analysis['texto_extraido']
+                del analysis['texto_extraido']
+            
+            document['analisis_ia'] = analysis
+        
+        # If document is associated with a client, get more details
+        if document.get('id_cliente'):
+            # Check if there are any active requests for this document
+            request_query = """
+            SELECT ds.id_solicitud, ds.fecha_solicitud, ds.estado,
+                   ds.fecha_limite, ds.solicitado_por, 
+                   u.nombre_usuario as solicitado_por_nombre
+            FROM documentos_solicitados ds
+            JOIN usuarios u ON ds.solicitado_por = u.id_usuario
+            WHERE ds.id_cliente = %s AND ds.id_documento_recibido = %s
+            """
+            
+            request_result = execute_query(request_query, (document['id_cliente'], doc_id))
+            if request_result:
+                request = request_result[0]
+                # Format dates
+                if 'fecha_solicitud' in request and request['fecha_solicitud']:
+                    request['fecha_solicitud'] = request['fecha_solicitud'].isoformat()
+                if 'fecha_limite' in request and request['fecha_limite']:
+                    request['fecha_limite'] = request['fecha_limite'].isoformat()
+                
+                document['solicitud'] = request
+            
+            # Check if document has specific financial or banking information
+            if document['id_tipo_documento']:
+                # Check for banking contract info
+                contract_query = """
+                SELECT tipo_contrato, numero_contrato, fecha_inicio, fecha_fin,
+                       estado, valor_contrato, tasa_interes, moneda,
+                       numero_producto, firmado_digitalmente
+                FROM contratos_bancarios
+                WHERE id_documento = %s
+                """
+                
+                contract_result = execute_query(contract_query, (doc_id,))
+                if contract_result:
+                    contract = contract_result[0]
+                    # Format dates
+                    date_fields = ['fecha_inicio', 'fecha_fin']
+                    for field in date_fields:
+                        if field in contract and contract[field]:
+                            contract[field] = contract[field].isoformat()
+                    
+                    document['contrato_bancario'] = contract
+                
+                # Check for ID document info
+                id_doc_query = """
+                SELECT tipo_documento, numero_documento, fecha_emision,
+                       fecha_expiracion, genero, nombre_completo, pais_emision
+                FROM documentos_identificacion
+                WHERE id_documento = %s
+                """
+                
+                id_doc_result = execute_query(id_doc_query, (doc_id,))
+                if id_doc_result:
+                    id_doc = id_doc_result[0]
+                    # Format dates
+                    date_fields = ['fecha_emision', 'fecha_expiracion']
+                    for field in date_fields:
+                        if field in id_doc and id_doc[field]:
+                            id_doc[field] = id_doc[field].isoformat()
+                    
+                    document['documento_identificacion'] = id_doc
+                
+                # Check for financial document info
+                fin_doc_query = """
+                SELECT tipo_documento_financiero, periodo_inicio, periodo_fin,
+                       institucion_emisora, ingresos_reportados, activos_reportados,
+                       pasivos_reportados, score_crediticio, moneda, verificado
+                FROM documentos_financieros
+                WHERE id_documento = %s
+                """
+                
+                fin_doc_result = execute_query(fin_doc_query, (doc_id,))
+                if fin_doc_result:
+                    fin_doc = fin_doc_result[0]
+                    # Format dates
+                    date_fields = ['periodo_inicio', 'periodo_fin']
+                    for field in date_fields:
+                        if field in fin_doc and fin_doc[field]:
+                            fin_doc[field] = fin_doc[field].isoformat()
+                    
+                    document['documento_financiero'] = fin_doc
+        
         # Format datetime fields
-        datetime_fields = ['fecha_creacion', 'fecha_modificacion', 'fecha_validacion']
+        datetime_fields = ['fecha_creacion', 'fecha_modificacion', 'fecha_validacion', 'fecha_asignacion']
         for field in datetime_fields:
             if field in document and document[field]:
                 document[field] = document[field].isoformat()
+        
+        # Add document processing history
+        process_history_query = """
+        SELECT id_registro, tipo_proceso, estado_proceso, 
+               timestamp_inicio, timestamp_fin, duracion_ms,
+               servicio_procesador, confianza
+        FROM registro_procesamiento_documento
+        WHERE id_documento = %s
+        ORDER BY timestamp_inicio DESC
+        LIMIT 10
+        """
+        
+        process_history = execute_query(process_history_query, (doc_id,))
+        
+        # Format datetime fields in process history
+        for record in process_history:
+            for field in ['timestamp_inicio', 'timestamp_fin']:
+                if field in record and record[field]:
+                    record[field] = record[field].isoformat()
+        
+        document['historial_procesamiento'] = process_history
+        
+        # Organize document in a more structured way
+        structured_response = {
+            'documento': {
+                'id': document['id_documento'],
+                'codigo': document['codigo_documento'],
+                'titulo': document['titulo'],
+                'descripcion': document['descripcion'],
+                'estado': document['estado'],
+                'fechas': {
+                    'creacion': document['fecha_creacion'],
+                    'modificacion': document['fecha_modificacion'],
+                    'validacion': document['fecha_validacion']
+                },
+                'tags': document.get('tags', []),
+                'metadatos': document.get('metadatos', {}),
+                'estadisticas': document.get('estadisticas', {})
+            },
+            'tipo_documento': {
+                'id': document['id_tipo_documento'],
+                'nombre': document['tipo_documento']
+            },
+            'version_actual': {
+                'numero': document['version_actual'],
+                'id': document['version_actual_id'],
+                'ruta': document['ruta_archivo'],
+                'tipo_almacenamiento': document['tipo_almacenamiento'],
+                'mime_type': document['mime_type'],
+                'tamano_bytes': document['tamano_bytes'],
+                'nombre_original': document['nombre_original'],
+                'extension': document['extension']
+            },
+            'creacion_modificacion': {
+                'creado_por': {
+                    'id': document['creado_por_id'],
+                    'nombre': document['creado_por_usuario']
+                },
+                'modificado_por': {
+                    'id': document['modificado_por_id'],
+                    'nombre': document['modificado_por_usuario']
+                }
+            },
+            'ubicacion': {
+                'id_carpeta': document['id_carpeta'],
+                'nombre_carpeta': document['nombre_carpeta'],
+                'ruta_carpeta': document['carpeta_ruta']
+            },
+            'validacion': {
+                'validado_manualmente': document['validado_manualmente'],
+                'confianza_extraccion': document['confianza_extraccion'],
+                'validado_por': document['validado_por']
+            },
+            'references': document['documentos_relacionados'],
+            'comentarios_count': document['comments_count'],
+            'versiones_count': document['versions_count'],
+            'historial_procesamiento': document.get('historial_procesamiento', [])
+        }
+        
+        # Add analysis section if available
+        if 'analisis_ia' in document:
+            structured_response['analisis_ia'] = document['analisis_ia']
+        
+        # Add client information if available
+        if document.get('id_cliente'):
+            structured_response['cliente'] = {
+                'id': document['id_cliente'],
+                'nombre': document['cliente_nombre'],
+                'codigo': document['codigo_cliente'],
+                'tipo': document['tipo_cliente'],
+                'documento_identificacion': document['documento_identificacion'],
+                'segmento_bancario': document['segmento_bancario'],
+                'nivel_riesgo': document['nivel_riesgo'],
+                'estado_documental': document['estado_documental'],
+                'gestor': {
+                    'id': document['gestor_principal_id'],
+                    'nombre': document['gestor_nombre']
+                },
+                'asignacion_documento': {
+                    'fecha': document.get('fecha_asignacion'),
+                    'asignado_por': document.get('asignado_por_nombre')
+                }
+            }
+            
+            # Add solicitud if available
+            if 'solicitud' in document:
+                structured_response['cliente']['solicitud'] = document['solicitud']
+        
+        # Add specialized document info if available
+        specialized_docs = {}
+        if 'contrato_bancario' in document:
+            specialized_docs['contrato_bancario'] = document['contrato_bancario']
+        
+        if 'documento_identificacion' in document:
+            specialized_docs['documento_identificacion'] = document['documento_identificacion']
+        
+        if 'documento_financiero' in document:
+            specialized_docs['documento_financiero'] = document['documento_financiero']
+        
+        if specialized_docs:
+            structured_response['documento_especializado'] = specialized_docs
         
         # Register document view in audit log
         audit_data = {
@@ -451,7 +782,7 @@ def get_document(event, context):
         return {
             'statusCode': 200,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps(document, default=str)
+            'body': json.dumps(structured_response, default=str)
         }
         
     except Exception as e:
@@ -881,7 +1212,7 @@ def list_document_versions(event, context):
         
         # Check if document exists and user has permission to access it
         check_query = """
-        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por
+        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por, d.id_tipo_documento
         FROM documentos d
         WHERE d.id_documento = %s AND d.estado != 'eliminado'
         """
@@ -920,6 +1251,30 @@ def list_document_versions(event, context):
                     'body': json.dumps({'error': 'You do not have permission to view this document'})
                 }
         
+        # Get document type information
+        type_query = """
+        SELECT id_tipo_documento, nombre_tipo, descripcion
+        FROM tipos_documento 
+        WHERE id_tipo_documento = %s
+        """
+        
+        type_result = execute_query(type_query, (document['id_tipo_documento'],))
+        document_type = type_result[0] if type_result else None
+        
+        # Get client information associated with the document
+        client_query = """
+        SELECT c.id_cliente, c.codigo_cliente, c.nombre_razon_social, c.tipo_cliente,
+               c.segmento_bancario, c.nivel_riesgo, c.estado,
+               dc.fecha_asignacion, 
+               u.nombre_usuario as asignado_por_nombre
+        FROM documentos_clientes dc
+        JOIN clientes c ON dc.id_cliente = c.id_cliente
+        LEFT JOIN usuarios u ON dc.asignado_por = u.id_usuario
+        WHERE dc.id_documento = %s
+        """
+        
+        clients = execute_query(client_query, (doc_id,))
+        
         # Get query parameters for pagination
         query_params = event.get('queryStringParameters', {}) or {}
         page = int(query_params.get('page', 1))
@@ -931,9 +1286,11 @@ def list_document_versions(event, context):
                v.creado_por, u.nombre_usuario as creado_por_usuario,
                v.comentario_version, v.tamano_bytes, v.nombre_original,
                v.extension, v.mime_type, v.estado_ocr,
-               v.ubicacion_almacenamiento_tipo, v.ubicacion_almacenamiento_ruta
+               v.ubicacion_almacenamiento_tipo, v.ubicacion_almacenamiento_ruta,
+               CASE WHEN v.numero_version = d.version_actual THEN TRUE ELSE FALSE END as es_version_actual
         FROM versiones_documento v
         JOIN usuarios u ON v.creado_por = u.id_usuario
+        JOIN documentos d ON v.id_documento = d.id_documento
         WHERE v.id_documento = %s
         ORDER BY v.numero_version DESC
         LIMIT %s OFFSET %s
@@ -958,10 +1315,17 @@ def list_document_versions(event, context):
             if 'fecha_creacion' in version and version['fecha_creacion']:
                 version['fecha_creacion'] = version['fecha_creacion'].isoformat()
         
-        # Prepare response with pagination metadata
+        # Format client dates
+        for client in clients:
+            if 'fecha_asignacion' in client and client['fecha_asignacion']:
+                client['fecha_asignacion'] = client['fecha_asignacion'].isoformat()
+        
+        # Prepare response with pagination metadata and enhanced information
         response = {
             'document_id': doc_id,
             'title': document['titulo'],
+            'document_type': document_type,
+            'clients': clients,  # Added client information
             'versions': versions,
             'pagination': {
                 'total': total_versions,
@@ -999,7 +1363,9 @@ def get_document_version(event, context):
         
         # Check if document exists and user has permission to access it
         check_query = """
-        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por, d.version_actual
+        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por, 
+               d.version_actual, d.id_tipo_documento, d.codigo_documento,
+               d.fecha_creacion, d.fecha_modificacion
         FROM documentos d
         WHERE d.id_documento = %s AND d.estado != 'eliminado'
         """
@@ -1038,6 +1404,47 @@ def get_document_version(event, context):
                     'body': json.dumps({'error': 'You do not have permission to view this document'})
                 }
         
+        # Get document type information
+        type_query = """
+        SELECT id_tipo_documento, nombre_tipo, descripcion, requiere_aprobacion
+        FROM tipos_documento 
+        WHERE id_tipo_documento = %s
+        """
+        
+        type_result = execute_query(type_query, (document['id_tipo_documento'],))
+        document_type = type_result[0] if type_result else None
+        
+        # Get client information associated with the document
+        client_query = """
+        SELECT c.id_cliente, c.codigo_cliente, c.nombre_razon_social, c.tipo_cliente,
+               c.segmento_bancario, c.nivel_riesgo, c.estado, c.estado_documental,
+               dc.fecha_asignacion, 
+               u.nombre_usuario as asignado_por_nombre
+        FROM documentos_clientes dc
+        JOIN clientes c ON dc.id_cliente = c.id_cliente
+        LEFT JOIN usuarios u ON dc.asignado_por = u.id_usuario
+        WHERE dc.id_documento = %s
+        """
+        
+        clients = execute_query(client_query, (doc_id,))
+        
+        # Format client dates
+        for client in clients:
+            if 'fecha_asignacion' in client and client['fecha_asignacion']:
+                client['fecha_asignacion'] = client['fecha_asignacion'].isoformat()
+        
+        # Get folder path if exists
+        folder_info = None
+        if document['id_carpeta']:
+            folder_query = """
+            SELECT id_carpeta, nombre_carpeta, ruta_completa
+            FROM carpetas
+            WHERE id_carpeta = %s
+            """
+            
+            folder_result = execute_query(folder_query, (document['id_carpeta'],))
+            folder_info = folder_result[0] if folder_result else None
+        
         # Query to get version details
         version_query = """
         SELECT v.id_version, v.numero_version, v.fecha_creacion,
@@ -1067,6 +1474,12 @@ def get_document_version(event, context):
         if 'fecha_creacion' in version and version['fecha_creacion']:
             version['fecha_creacion'] = version['fecha_creacion'].isoformat()
         
+        if 'fecha_creacion' in document and document['fecha_creacion']:
+            document['fecha_creacion'] = document['fecha_creacion'].isoformat()
+            
+        if 'fecha_modificacion' in document and document['fecha_modificacion']:
+            document['fecha_modificacion'] = document['fecha_modificacion'].isoformat()
+        
         # Parse JSON fields
         json_fields = ['ubicacion_almacenamiento_parametros', 'metadatos_extraidos']
         for field in json_fields:
@@ -1082,6 +1495,34 @@ def get_document_version(event, context):
         # Truncate extracted text if too long
         if 'texto_extraido' in version and version['texto_extraido'] and len(version['texto_extraido']) > 1000:
             version['texto_extraido'] = version['texto_extraido'][:1000] + "... (truncated)"
+        
+        # Check if there's any analysis from AI processing
+        analysis_query = """
+        SELECT id_analisis, tipo_documento, confianza_clasificacion, 
+               entidades_detectadas, estado_analisis, fecha_analisis
+        FROM analisis_documento_ia
+        WHERE id_documento = %s
+        ORDER BY fecha_analisis DESC
+        LIMIT 1
+        """
+        
+        analysis_result = execute_query(analysis_query, (doc_id,))
+        analysis_info = None
+        
+        if analysis_result:
+            analysis = analysis_result[0]
+            # Format analysis dates
+            if 'fecha_analisis' in analysis and analysis['fecha_analisis']:
+                analysis['fecha_analisis'] = analysis['fecha_analisis'].isoformat()
+            
+            # Parse JSON fields in analysis
+            if analysis['entidades_detectadas']:
+                try:
+                    analysis['entidades_detectadas'] = json.loads(analysis['entidades_detectadas'])
+                except:
+                    analysis['entidades_detectadas'] = {}
+            
+            analysis_info = analysis
         
         # Log version view
         audit_data = {
@@ -1100,14 +1541,28 @@ def get_document_version(event, context):
         
         insert_audit_record(audit_data)
         
+        # Prepare enhanced response with additional information
+        response = {
+            'document': {
+                'id': doc_id,
+                'codigo': document['codigo_documento'],
+                'title': document['titulo'],
+                'version_actual': document['version_actual'],
+                'fecha_creacion': document['fecha_creacion'],
+                'fecha_modificacion': document['fecha_modificacion'],
+                'estado': document['estado']
+            },
+            'document_type': document_type,
+            'clients': clients,  # Added client information
+            'folder': folder_info,
+            'version': version,
+            'analysis': analysis_info
+        }
+        
         return {
             'statusCode': 200,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({
-                'document_id': doc_id,
-                'document_title': document['titulo'],
-                'version': version
-            }, default=str)
+            'body': json.dumps(response, default=str)
         }
         
     except Exception as e:
@@ -1117,7 +1572,7 @@ def get_document_version(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document version: {str(e)}'})
         }
-
+    
 def create_document_version(event, context):
     """Creates a new version for an existing document"""
     try:
