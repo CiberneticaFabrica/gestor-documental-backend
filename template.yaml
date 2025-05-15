@@ -16,8 +16,8 @@ Globals:
       Variables:
         DB_HOST: !Ref DBHost
         DB_USER: !Ref DBUser
-        DB_PASSWORD: !Ref DBPassword
-        DB_NAME: !Ref DBName
+        DB_PASSWORD: kYcwbOLpRKX1TpTMiAC6
+        DB_NAME: gestor_documental
         SESSION_EXPIRY_MINUTES: 1440
   Api:
     TracingEnabled: true
@@ -594,6 +594,35 @@ Resources:
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /users/{id}/permissions/{permission_code}
+            Method: GET
+  DashboardMetricsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: dashboard.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        DashboardMetricsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics
+            Method: OPTIONS
+        DashboardMetricsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics
             Method: GET
   DocumentFunction:
     Type: AWS::Serverless::Function
