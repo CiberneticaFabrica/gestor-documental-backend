@@ -3,12 +3,14 @@ import json
 import logging
 import datetime
 from uuid import uuid4
+import pymysql
 
 from common.db import (
     execute_query,
     get_connection,
     generate_uuid,
-    insert_audit_record
+    insert_audit_record,
+    search_documents_sp
 )
 
 from common.headers import add_cors_headers
@@ -128,240 +130,69 @@ def search_documents(event, context):
             return error_response
         
         # Obtener parámetros de búsqueda del cuerpo
-        body = json.loads(event['body'])
+        body = json.loads(event['body']) if event.get('body') else {}
+        
+        # Obtener IP del cliente
+        client_ip = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
         
         # Extraer criterios de búsqueda con valores por defecto
-        search_term = body.get('search_term', '')
-        document_types = body.get('document_types', [])
-        status = body.get('status', [])
-        date_from = body.get('date_from')
-        date_to = body.get('date_to')
-        folders = body.get('folders', [])
-        tags = body.get('tags', [])
-        metadata_filters = body.get('metadata_filters', [])
-        creators = body.get('creators', [])
-        
-        # Paginación
-        page = int(body.get('page', 1))
-        page_size = int(body.get('page_size', 10))
-        
-        # Ordenamiento
-        sort_by = body.get('sort_by', 'fecha_modificacion')
-        sort_order = body.get('sort_order', 'DESC')
-        
-        # Validar ordenamiento
-        valid_sort_fields = ['titulo', 'fecha_creacion', 'fecha_modificacion', 'creado_por', 'codigo_documento']
-        if sort_by not in valid_sort_fields:
-            sort_by = 'fecha_modificacion'
-        
-        if sort_order not in ['ASC', 'DESC']:
-            sort_order = 'DESC'
-        
-        # Construir consulta base
-        query = """
-        SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
-               d.id_tipo_documento, td.nombre_tipo as tipo_documento,
-               d.version_actual, d.fecha_creacion, d.fecha_modificacion,
-               d.id_carpeta, c.nombre_carpeta, c.ruta_completa as carpeta_ruta,
-               d.estado, d.tags, 
-               u_creador.id_usuario as creado_por_id,
-               u_creador.nombre_usuario as creado_por_usuario,
-               u_modificador.nombre_usuario as modificado_por_usuario,
-               v.mime_type,
-               (SELECT COUNT(*) FROM comentarios_documento cd WHERE cd.id_documento = d.id_documento AND cd.estado = 'activo') as comentarios_count
-        FROM documentos d
-        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
-        LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
-        JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
-        JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
-        LEFT JOIN versiones_documento v ON d.id_documento = v.id_documento AND v.numero_version = d.version_actual
-        """
-        
-        # Consulta para contar resultados totales
-        count_query = """
-        SELECT COUNT(*) as total
-        FROM documentos d
-        JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
-        LEFT JOIN carpetas c ON d.id_carpeta = c.id_carpeta
-        JOIN usuarios u_creador ON d.creado_por = u_creador.id_usuario
-        JOIN usuarios u_modificador ON d.modificado_por = u_modificador.id_usuario
-        """
-        
-        # Condiciones WHERE
-        where_clauses = []
-        params = []
-        
-        # Excluir documentos eliminados por defecto
-        where_clauses.append("d.estado != 'eliminado'")
-        
-        # Filtro de permisos (solo documentos a los que el usuario tiene acceso)
-        access_condition = """
-        (
-            d.creado_por = %s
-            OR d.id_carpeta IN (
-                SELECT pc.id_carpeta 
-                FROM permisos_carpetas pc 
-                WHERE (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario')
-                OR (pc.id_entidad IN (
-                    SELECT g.id_grupo 
-                    FROM usuarios_grupos ug 
-                    JOIN grupos g ON ug.id_grupo = g.id_grupo 
-                    WHERE ug.id_usuario = %s
-                ) AND pc.tipo_entidad = 'grupo')
-            )
-        )
-        """
-        where_clauses.append(access_condition)
-        params.extend([user_id, user_id, user_id])
-        
-        # Búsqueda por término en título, descripción y texto extraído
-        if search_term:
-            # Primero verificamos si hay versiones de documento con texto que contenga el término
-            search_in_content = """
-            d.id_documento IN (
-                SELECT vd.id_documento
-                FROM versiones_documento vd
-                WHERE vd.texto_extraido LIKE %s
-            )
-            """
-            
-            search_term_condition = f"(d.titulo LIKE %s OR d.descripcion LIKE %s OR {search_in_content})"
-            search_param = f"%{search_term}%"
-            where_clauses.append(search_term_condition)
-            params.extend([search_param, search_param, search_param])
-        
-        # Filtrar por tipos de documento
-        if document_types:
-            placeholders = ', '.join(['%s'] * len(document_types))
-            where_clauses.append(f"d.id_tipo_documento IN ({placeholders})")
-            params.extend(document_types)
-        
-        # Filtrar por estado
-        if status:
-            placeholders = ', '.join(['%s'] * len(status))
-            where_clauses.append(f"d.estado IN ({placeholders})")
-            params.extend(status)
-        
-        # Filtrar por rango de fechas (creación)
-        if date_from:
-            where_clauses.append("d.fecha_creacion >= %s")
-            params.append(date_from)
-        
-        if date_to:
-            where_clauses.append("d.fecha_creacion <= %s")
-            params.append(date_to)
-        
-        # Filtrar por carpetas
-        if folders:
-            placeholders = ', '.join(['%s'] * len(folders))
-            where_clauses.append(f"d.id_carpeta IN ({placeholders})")
-            params.extend(folders)
-        
-        # Filtrar por etiquetas (tags)
-        if tags:
-            # Para cada tag, necesitamos verificar si está en el JSON array
-            for tag in tags:
-                where_clauses.append("JSON_CONTAINS(d.tags, %s, '$')")
-                params.append(json.dumps(tag))
-        
-        # Filtrar por creadores
-        if creators:
-            placeholders = ', '.join(['%s'] * len(creators))
-            where_clauses.append(f"d.creado_por IN ({placeholders})")
-            params.extend(creators)
-        
-        # Filtrar por metadatos específicos
-        if metadata_filters:
-            for filter_item in metadata_filters:
-                field = filter_item.get('field')
-                operator = filter_item.get('operator', '=')
-                value = filter_item.get('value')
-                
-                if not field or value is None:
-                    continue
-                
-                # Validar operador
-                valid_operators = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'CONTAINS']
-                if operator not in valid_operators:
-                    operator = '='
-                
-                # Construir condición específica según el operador
-                if operator in ('IN', 'NOT IN'):
-                    if isinstance(value, list):
-                        placeholders = ', '.join(['%s'] * len(value))
-                        where_clauses.append(f"JSON_UNQUOTE(JSON_EXTRACT(d.metadatos, '$.{field}')) {operator} ({placeholders})")
-                        params.extend(value)
-                elif operator == 'CONTAINS':
-                    # Para buscar dentro de arrays en JSON
-                    where_clauses.append(f"JSON_CONTAINS(JSON_EXTRACT(d.metadatos, '$.{field}'), %s)")
-                    params.append(json.dumps(value))
-                else:
-                    where_clauses.append(f"JSON_UNQUOTE(JSON_EXTRACT(d.metadatos, '$.{field}')) {operator} %s")
-                    if operator in ('LIKE', 'NOT LIKE') and '%' not in value:
-                        params.append(f"%{value}%")
-                    else:
-                        params.append(value)
-        
-        # Añadir WHERE al query principal si hay condiciones
-        if where_clauses:
-            query += " WHERE " + " AND ".join(where_clauses)
-            count_query += " WHERE " + " AND ".join(where_clauses)
-        
-        # Añadir ordenamiento
-        query += f" ORDER BY d.{sort_by} {sort_order}"
-        
-        # Añadir límite y offset para paginación
-        query += " LIMIT %s OFFSET %s"
-        params.append(page_size)
-        params.append((page - 1) * page_size)
-        
-        # Ejecutar consultas
-        documents = execute_query(query, params)
-        count_result = execute_query(count_query, params[:-2] if params else [])
-        
-        total_documents = count_result[0]['total'] if count_result else 0
-        total_pages = (total_documents + page_size - 1) // page_size if total_documents > 0 else 1
-        
-        # Procesar resultados
-        for doc in documents:
-            # Convertir datetime a string
-            if 'fecha_creacion' in doc and doc['fecha_creacion']:
-                doc['fecha_creacion'] = doc['fecha_creacion'].isoformat()
-            if 'fecha_modificacion' in doc and doc['fecha_modificacion']:
-                doc['fecha_modificacion'] = doc['fecha_modificacion'].isoformat()
-            
-            # Procesar campos JSON
-            if 'tags' in doc and doc['tags']:
-                try:
-                    doc['tags'] = json.loads(doc['tags'])
-                except:
-                    doc['tags'] = []
-        
-        # Registrar la búsqueda en auditoría
-        audit_data = {
-            'fecha_hora': datetime.datetime.now(),
-            'usuario_id': user_id,
-            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
-            'accion': 'buscar',
-            'entidad_afectada': 'documento',
-            'id_entidad_afectada': None,
-            'detalles': json.dumps({
-                'termino_busqueda': search_term,
-                'filtros': {
-                    'tipos_documento': document_types,
-                    'estados': status,
-                    'fecha_desde': date_from,
-                    'fecha_hasta': date_to,
-                    'carpetas': folders,
-                    'etiquetas': tags,
-                    'creadores': creators
-                },
-                'resultados_encontrados': total_documents
-            }),
-            'resultado': 'éxito'
+        # y manejar explícitamente valores null transformándolos a sus valores por defecto
+        search_criteria = {
+            'search_term': body.get('search_term', '') or '',
+            'document_types': body.get('document_types', []) or [],
+            'status': body.get('status', []) or [],
+            'date_from': body.get('date_from'),
+            'date_to': body.get('date_to'),
+            'fecha_modificacion_desde': body.get('fecha_modificacion_desde'),
+            'fecha_modificacion_hasta': body.get('fecha_modificacion_hasta'),
+            'folders': body.get('folders', []) or [],
+            'tags': body.get('tags', []) or [],
+            'metadata_filters': body.get('metadata_filters', []) or [],
+            'creators': body.get('creators', []) or [],
+            'modificado_por': body.get('modificado_por', []) or [],
+            'cliente_id': body.get('cliente_id', []) or [],
+            'cliente_nombre': body.get('cliente_nombre', '') or '',
+            'tipo_cliente': body.get('tipo_cliente', []) or [],
+            'segmento_cliente': body.get('segmento_cliente', []) or [],
+            'nivel_riesgo': body.get('nivel_riesgo', []) or [],
+            'estado_documental': body.get('estado_documental', []) or [],
+            'categoria_bancaria': body.get('categoria_bancaria', []) or [],
+            'confianza_extraccion_min': body.get('confianza_extraccion_min'),
+            'validado_manualmente': body.get('validado_manualmente', -1),
+            'incluir_eliminados': body.get('incluir_eliminados', 0),
+            'texto_extraido': body.get('texto_extraido', '') or '',
+            'con_alertas_documento': body.get('con_alertas_documento', -1),
+            'con_comentarios': body.get('con_comentarios', -1),
+            'tipo_formato': body.get('tipo_formato', []) or [],
+            'page': int(body.get('page', 1)),
+            'page_size': int(body.get('page_size', 10)),
+            'sort_by': body.get('sort_by', 'fecha_modificacion') or 'fecha_modificacion',
+            'sort_order': body.get('sort_order', 'DESC') or 'DESC'
         }
         
-        insert_audit_record(audit_data)
+        # Validar parámetros numéricos
+        for param in ['page', 'page_size']:
+            if not isinstance(search_criteria[param], int) or search_criteria[param] < 1:
+                search_criteria[param] = 1 if param == 'page' else 10
+        
+        # Validar parámetros de ordenamiento
+        valid_sort_fields = ['titulo', 'fecha_creacion', 'fecha_modificacion', 'creado_por', 
+                            'codigo_documento', 'nombre_cliente', 'tipo_documento', 
+                            'confianza_extraccion', 'comentarios_count']
+        
+        if search_criteria['sort_by'] not in valid_sort_fields:
+            search_criteria['sort_by'] = 'fecha_modificacion'
+            
+        if search_criteria['sort_order'] not in ['ASC', 'DESC']:
+            search_criteria['sort_order'] = 'DESC'
+        
+        # Llamar al procedimiento almacenado
+        documents, total_documents = search_documents_sp(user_id, search_criteria, client_ip)
+        
+        # Calcular información de paginación
+        page = search_criteria['page']
+        page_size = search_criteria['page_size']
+        total_pages = (total_documents + page_size - 1) // page_size if total_documents > 0 else 1
         
         # Construir respuesta
         response = {
@@ -372,19 +203,7 @@ def search_documents(event, context):
                 'page_size': page_size,
                 'total_pages': total_pages
             },
-            'search_criteria': {
-                'search_term': search_term,
-                'document_types': document_types,
-                'status': status,
-                'date_from': date_from,
-                'date_to': date_to,
-                'folders': folders,
-                'tags': tags,
-                'metadata_filters': metadata_filters,
-                'creators': creators,
-                'sort_by': sort_by,
-                'sort_order': sort_order
-            }
+            'search_criteria': search_criteria
         }
         
         return {
@@ -395,12 +214,44 @@ def search_documents(event, context):
         
     except Exception as e:
         logger.error(f"Error en búsqueda de documentos: {str(e)}")
+        # Si es un error específico de MySQL, capturarlo con más detalles
+        if isinstance(e, pymysql.err.MySQLError):
+            error_details = str(e)
+            if len(e.args) >= 2:
+                error_code = e.args[0]
+                error_message = e.args[1]
+                error_details = f"Error MySQL {error_code}: {error_message}"
+            logger.error(error_details)
+            
+            # Registrar el error en auditoría si es posible
+            try:
+                audit_data = {
+                    'fecha_hora': datetime.datetime.now(),
+                    'usuario_id': user_id if 'user_id' in locals() else None,
+                    'direccion_ip': client_ip if 'client_ip' in locals() else '0.0.0.0',
+                    'accion': 'buscar',
+                    'entidad_afectada': 'documento',
+                    'id_entidad_afectada': None,
+                    'detalles': json.dumps({
+                        'error': error_details,
+                        'criterios_busqueda': search_criteria if 'search_criteria' in locals() else {}
+                    }),
+                    'resultado': 'fallo'
+                }
+                insert_audit_record(audit_data)
+            except:
+                # Si falla el registro de auditoría, seguimos adelante con la respuesta de error
+                pass
+        
         return {
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({'error': f'Error en búsqueda de documentos: {str(e)}'})
+            'body': json.dumps({
+                'error': f'Error en búsqueda de documentos: {str(e)}',
+                'error_code': e.args[0] if isinstance(e, pymysql.err.MySQLError) and len(e.args) >= 1 else None
+            })
         }
-
+ 
 def suggest_terms(event, context):
     """Sugiere términos para autocompletado basado en contenido existente"""
     try:
