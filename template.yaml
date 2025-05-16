@@ -716,6 +716,19 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /dashboard/metrics/timing
             Method: GET
+        # Activity metrics endpoint
+        DashboardActivityOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/activity
+            Method: OPTIONS
+        DashboardActivityGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/activity
+            Method: GET
   DocumentFunction:
     Type: AWS::Serverless::Function
     Properties:

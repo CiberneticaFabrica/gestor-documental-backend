@@ -1941,7 +1941,7 @@ def get_recent_activity(event, context):
     """Retrieves recent activity metrics for the dashboard"""
     try:
         # Validate session
-        user_id, error_response = validate_session(event, 'dashboard.view')
+        user_id, error_response = validate_session(event, 'admin.dashboard')
         if error_response:
             return error_response
 
