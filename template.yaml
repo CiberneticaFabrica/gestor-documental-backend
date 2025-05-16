@@ -16,8 +16,8 @@ Globals:
       Variables:
         DB_HOST: !Ref DBHost
         DB_USER: !Ref DBUser
-        DB_PASSWORD: !Ref DBPassword
-        DB_NAME: !Ref DBName
+        DB_PASSWORD: kYcwbOLpRKX1TpTMiAC6
+        DB_NAME: gestor_documental
         SESSION_EXPIRY_MINUTES: 1440
   Api:
     TracingEnabled: true
@@ -612,6 +612,7 @@ Resources:
           - !Ref PrivateSubnet1
           - !Ref PrivateSubnet2
       Events:
+        # Main dashboard metrics endpoint
         DashboardMetricsOptions:
           Type: Api
           Properties:
@@ -623,6 +624,97 @@ Resources:
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /dashboard/metrics
+            Method: GET
+        # Document metrics endpoint
+        DashboardDocumentsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/documents
+            Method: OPTIONS
+        DashboardDocumentsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/documents
+            Method: GET
+        # User metrics endpoint
+        DashboardUsersOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/users
+            Method: OPTIONS
+        DashboardUsersGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/users
+            Method: GET
+        # Processing metrics endpoint
+        DashboardProcessingOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/processing
+            Method: OPTIONS
+        DashboardProcessingGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/processing
+            Method: GET
+        # Classification accuracy endpoint
+        DashboardClassificationOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/classification
+            Method: OPTIONS
+        DashboardClassificationGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/classification
+            Method: GET
+        # Extraction confidence endpoint
+        DashboardExtractionOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/extraction
+            Method: OPTIONS
+        DashboardExtractionGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/extraction
+            Method: GET
+        # Document volume trends endpoint
+        DashboardVolumeOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/volume
+            Method: OPTIONS
+        DashboardVolumeGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/volume
+            Method: GET
+        # Processing times endpoint
+        DashboardTimingOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/timing
+            Method: OPTIONS
+        DashboardTimingGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /dashboard/metrics/timing
             Method: GET
   DocumentFunction:
     Type: AWS::Serverless::Function
@@ -1081,6 +1173,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /clients/{id}
             Method: DELETE
+        ClientsMetricsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/metrics
+            Method: OPTIONS
+        ClientsMetrics:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/metrics
+            Method: GET
         # Rutas para documentos del cliente
         ClientDocumentsOptions:
           Type: Api
@@ -1290,3 +1394,12 @@ Outputs:
   DocumentViewerFunctionIamRole:
     Description: Implicit IAM Role created for Document Viewer function
     Value: !GetAtt DocumentViewerFunctionRole.Arn
+  DashboardMetricsApi:
+    Description: API Gateway endpoint URL for Prod stage for Dashboard Metrics functions
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/dashboard/metrics"
+  DashboardMetricsFunctionArn:
+    Description: Dashboard Metrics Lambda Function ARN
+    Value: !GetAtt DashboardMetricsFunction.Arn
+  DashboardMetricsFunctionIamRole:
+    Description: Implicit IAM Role created for Dashboard Metrics function
+    Value: !GetAtt DashboardMetricsFunctionRole.Arn

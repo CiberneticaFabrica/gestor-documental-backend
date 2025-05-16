@@ -36,10 +36,12 @@ def lambda_handler(event, context):
             return list_clients(event, context)
         elif http_method == 'POST' and path == '/clients':
             return create_client(event, context)
-        elif http_method == 'GET' and path.startswith('/clients/') and not path.endswith('/documents') and not path.endswith('/requests') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/requests') and not path.endswith('/documents/expiring'):
+        elif http_method == 'GET' and path.startswith('/clients/') and not path.endswith('/metrics') and not path.endswith('/documents') and not path.endswith('/requests') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/status') and not path.endswith('/documents/pending') and not path.endswith('/completeness') and not path.endswith('/risk') and not path.endswith('/activity') and not path.endswith('/documents/requests') and not path.endswith('/documents/expiring'):
             client_id = path.split('/')[2]
             event['pathParameters'] = {'id': client_id}
             return get_client(event, context)
+        elif http_method == 'GET' and path.endswith('/metrics'):
+            return get_client_metrics(event, context)
         elif http_method == 'PUT' and path.startswith('/clients/'):
             client_id = path.split('/')[2]
             event['pathParameters'] = {'id': client_id}
@@ -333,6 +335,121 @@ def list_clients(event, context):
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al listar clientes: {str(e)}'})
+        }
+
+def get_client_metrics(event, context):
+    """Obtiene métricas de clientes para el dashboard"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'clientes.ver')
+        if error_response:
+            return error_response
+        
+        # Consulta para obtener conteos generales
+        base_counts_query = """
+        SELECT 
+            COUNT(*) as total_clientes,
+            SUM(CASE WHEN estado = 'activo' THEN 1 ELSE 0 END) as clientes_activos,
+            SUM(CASE WHEN estado = 'inactivo' THEN 1 ELSE 0 END) as clientes_inactivos,
+            SUM(CASE WHEN estado = 'prospecto' THEN 1 ELSE 0 END) as clientes_prospecto
+        FROM clientes
+        """
+        
+        # Consulta para distribución por tipo de cliente
+        types_query = """
+        SELECT 
+            tipo_cliente,
+            COUNT(*) as count
+        FROM clientes
+        GROUP BY tipo_cliente
+        ORDER BY count DESC
+        """
+        
+        # Consulta para distribución por segmento bancario
+        segments_query = """
+        SELECT 
+            segmento_bancario,
+            COUNT(*) as count
+        FROM clientes
+        WHERE segmento_bancario IS NOT NULL
+        GROUP BY segmento_bancario
+        ORDER BY count DESC
+        """
+        
+        # Consulta para distribución por nivel de riesgo
+        risk_query = """
+        SELECT 
+            nivel_riesgo,
+            COUNT(*) as count
+        FROM clientes
+        WHERE nivel_riesgo IS NOT NULL
+        GROUP BY nivel_riesgo
+        ORDER BY FIELD(nivel_riesgo, 'bajo', 'medio', 'alto', 'muy_alto')
+        """
+        
+        # Consulta para estado documental
+        doc_status_query = """
+        SELECT 
+            estado_documental,
+            COUNT(*) as count
+        FROM clientes
+        WHERE estado_documental IS NOT NULL
+        GROUP BY estado_documental
+        """
+        
+        # Consulta para métricas de actividad
+        activity_query = """
+        SELECT 
+            COUNT(*) as total_con_actividad,
+            DATE_FORMAT(MAX(fecha_ultima_actividad), '%Y-%m-%d') as ultima_actividad,
+            SUM(CASE WHEN fecha_ultima_actividad >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as activos_ultimos_30_dias,
+            SUM(CASE WHEN fecha_ultima_actividad >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) THEN 1 ELSE 0 END) as activos_ultimos_90_dias
+        FROM clientes
+        WHERE fecha_ultima_actividad IS NOT NULL
+        """
+        
+        # Consulta para próximas revisiones KYC
+        kyc_query = """
+        SELECT 
+            COUNT(*) as total_con_revision,
+            SUM(CASE WHEN proxima_revision_kyc < CURDATE() THEN 1 ELSE 0 END) as revisiones_vencidas,
+            SUM(CASE WHEN proxima_revision_kyc BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as revisiones_proximos_30_dias
+        FROM clientes
+        WHERE proxima_revision_kyc IS NOT NULL
+        """
+        
+        # Ejecutar todas las consultas
+        base_counts = execute_query(base_counts_query)
+        client_types = execute_query(types_query)
+        segments = execute_query(segments_query)
+        risk_levels = execute_query(risk_query)
+        doc_status = execute_query(doc_status_query)
+        activity_metrics = execute_query(activity_query)
+        kyc_metrics = execute_query(kyc_query)
+        
+        # Construir respuesta
+        response = {
+            'conteos_basicos': base_counts[0] if base_counts else {},
+            'distribucion_tipo_cliente': client_types if client_types else [],
+            'distribucion_segmento_bancario': segments if segments else [],
+            'distribucion_nivel_riesgo': risk_levels if risk_levels else [],
+            'estado_documental': doc_status if doc_status else [],
+            'metricas_actividad': activity_metrics[0] if activity_metrics else {},
+            'metricas_kyc': kyc_metrics[0] if kyc_metrics else {}
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener métricas de clientes: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener métricas de clientes: {str(e)}'})
         }
 
 def get_client(event, context):
