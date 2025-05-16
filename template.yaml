@@ -1327,6 +1327,98 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /clients/{id}/documents/requests
             Method: GET
+  AuditLogsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: auditlog.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # Options handlers for CORS preflight
+        AuditLogsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs
+            Method: OPTIONS
+        AuditLogDetailOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/{id}
+            Method: OPTIONS
+        AuditLogsExportOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/export
+            Method: OPTIONS
+        AuditLogsUserOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/users/{user_id}
+            Method: OPTIONS
+        AuditLogsDocumentOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/documents/{document_id}
+            Method: OPTIONS
+        AuditLogsSecurityOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/security
+            Method: OPTIONS
+            
+        # Regular routes
+        ListAuditLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs
+            Method: GET
+        GetAuditLog:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/{id}
+            Method: GET
+        ExportAuditLogs:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/export
+            Method: POST
+        GetUserActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/users/{user_id}
+            Method: GET
+        GetDocumentActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/documents/{document_id}
+            Method: GET
+        GetSecurityEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /audit-logs/security
+            Method: GET
   ApplicationResourceGroup:
     Type: AWS::ResourceGroups::Group
     Properties:
