@@ -793,6 +793,7 @@ def get_document(event, context):
             'body': json.dumps({'error': f'Error getting document: {str(e)}'})
         }
 
+
 def create_document(event, context):
     """
     Genera una URL prefirmada para subir un archivo directamente a S3 con los metadatos
@@ -820,11 +821,12 @@ def create_document(event, context):
         # Get fields from body
         id_cliente = body['id_cliente']
         filename = body['filename']
-        #id_tipo_documento = body.get('id_tipo_documento', '')
         content_type = body.get('content_type', 'application/octet-stream')
+        # NEW: Check if this is a new version of an existing document
+        parent_document_id = body.get('parent_document_id')
        
-        # Generate document ID
-        doc_id = generate_uuid()
+        # Generate document ID (NEW: use parent_document_id if this is a new version)
+        doc_id = parent_document_id if parent_document_id else generate_uuid()
        
         # Initialize S3 client
         import boto3
@@ -841,8 +843,10 @@ def create_document(event, context):
         s3_client = boto3.client('s3', config=retry_config)
        
         # Definir el bucket y la ruta en S3
-        upload_bucket = 'gestor-documental-bancario-documents-input'  # Usando el nombre específico que mencionaste
-        s3_key = f"incoming/{doc_id}/{filename}"
+        upload_bucket = 'gestor-documental-bancario-documents-input'
+        # NEW: Include version info in the S3 key if it's a new version
+        folder_prefix = "incoming" if parent_document_id else "incoming"
+        s3_key = f"{folder_prefix}/{doc_id}/{filename}"
        
         # Generar URL prefirmada para carga directa a S3 con metadatos
         presigned_post = s3_client.generate_presigned_post(
@@ -851,16 +855,18 @@ def create_document(event, context):
             Fields={
                 'Content-Type': content_type,
                 'x-amz-meta-client-id': id_cliente,
-                'x-amz-meta-document-id': doc_id
-               
+                'x-amz-meta-document-id': doc_id,
+                # NEW: Add metadata to indicate if this is a new version
+                'x-amz-meta-is-new-version': 'true' if parent_document_id else 'false'
             },
             Conditions=[
-                ['content-length-range', 1, 20 * 1024 * 1024],  # Limitar tamaño a 20MB
+                ['content-length-range', 1, 20 * 1024 * 1024],
                 ['eq', '$Content-Type', content_type],
                 ['eq', '$x-amz-meta-client-id', id_cliente],
-                ['eq', '$x-amz-meta-document-id', doc_id]
+                ['eq', '$x-amz-meta-document-id', doc_id],
+                ['eq', '$x-amz-meta-is-new-version', 'true' if parent_document_id else 'false']
             ],
-            ExpiresIn=900  # URL válida por 15 minutos
+            ExpiresIn=900
         )
        
         # Preparar respuesta con instrucciones y URL para carga
@@ -871,25 +877,27 @@ def create_document(event, context):
             'upload_fields': presigned_post['fields'],
             'metadata': {
                 'client-id': id_cliente,
-                'document-id': doc_id
+                'document-id': doc_id,
+                'is-new-version': 'true' if parent_document_id else 'false'
             },
-            'ruta_s3': f"incoming/{doc_id}/",
-            'expira_en': 900  # segundos
+            'ruta_s3': f"{folder_prefix}/{doc_id}/",
+            'expira_en': 900
         }
        
-        # Registrar en auditoría si es necesario
+        # Registrar en auditoría
         try:
             audit_data = {
                 'fecha_hora': datetime.datetime.now(),
                 'usuario_id': user_id,
                 'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
-                'accion': 'generar_url_carga',
+                'accion': 'generar_url_carga' + ('_nueva_version' if parent_document_id else ''),
                 'entidad_afectada': 'documento',
                 'id_entidad_afectada': doc_id,
                 'detalles': json.dumps({
                     'id_cliente': id_cliente,
                     'filename': filename,
-                    'content_type': content_type
+                    'content_type': content_type,
+                    'is_new_version': bool(parent_document_id)
                 }),
                 'resultado': 'éxito'
             }
@@ -1577,168 +1585,124 @@ def create_document_version(event, context):
     """Creates a new version for an existing document"""
     try:
         # Validate session
-        user_id, error_response = validate_session(event, 'documentos.editar')
+        user_id, error_response = validate_session(event, 'documentos.crear')
         if error_response:
             return error_response
-        
-        # Get document ID
-        doc_id = event['pathParameters']['id']
-        
-        # Check if document exists and user has permission to edit it
-        check_query = """
-        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por, d.version_actual
-        FROM documentos d
-        WHERE d.id_documento = %s AND d.estado != 'eliminado'
-        """
-        
-        doc_result = execute_query(check_query, (doc_id,))
-        if not doc_result:
-            return {
-                'statusCode': 404,
-                'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                'body': json.dumps({'error': 'Document not found or deleted'})
-            }
-        
-        document = doc_result[0]
-        
-        # Check if user has permission to edit the document
-        if document['creado_por'] != user_id:
-            # Check if user has write access to the document's folder
-            access_query = """
-            SELECT COUNT(*) as has_access
-            FROM permisos_carpetas pc
-            WHERE pc.id_carpeta = %s AND tipo_permiso IN ('escritura', 'administracion') AND (
-                (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
-                (pc.id_entidad IN (
-                    SELECT ug.id_grupo
-                    FROM usuarios_grupos ug
-                    WHERE ug.id_usuario = %s
-                ) AND pc.tipo_entidad = 'grupo')
-            )
-            """
-            
-            access_result = execute_query(access_query, (document['id_carpeta'], user_id, user_id))
-            if not access_result or access_result[0]['has_access'] == 0:
-                return {
-                    'statusCode': 403,
-                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': 'You do not have permission to edit this document'})
-                }
-        
-        # Parse request body
+       
+        # Get request body
         body = json.loads(event['body'])
-        
+       
         # Validate required fields
-        required_fields = [
-            'nombre_original', 
-            'tamano_bytes', 
-            'hash_contenido', 
-            'mime_type',
-            'ubicacion_almacenamiento_tipo',
-            'ubicacion_almacenamiento_ruta'
-        ]
-        
+        required_fields = ['id_cliente', 'filename']
         for field in required_fields:
             if field not in body:
                 return {
                     'statusCode': 400,
                     'headers': add_cors_headers({'Content-Type': 'application/json'}),
-                    'body': json.dumps({'error': f'Missing required field: {field}'})
+                    'body': json.dumps({'error': f'Campo requerido faltante: {field}'})
                 }
-        
-        # Extract fields from body
-        nombre_original = body['nombre_original']
-        tamano_bytes = body['tamano_bytes']
-        hash_contenido = body['hash_contenido']
-        mime_type = body['mime_type']
-        ubicacion_tipo = body['ubicacion_almacenamiento_tipo']
-        ubicacion_ruta = body['ubicacion_almacenamiento_ruta']
-        ubicacion_parametros = body.get('ubicacion_almacenamiento_parametros', {})
-        comentario_version = body.get('comentario_version')
-        extension = body.get('extension')
-        metadatos_extraidos = body.get('metadatos_extraidos', {})
-        texto_extraido = body.get('texto_extraido')
-        estado_ocr = body.get('estado_ocr', 'no_aplica')
-        miniaturas_generadas = body.get('miniaturas_generadas', False)
-        
-        # Generate new version number
-        new_version_number = document['version_actual'] + 1
-        
-        # Generate version ID
-        version_id = generate_uuid()
-        
-        # Insert new version
-        now = datetime.datetime.now()
-        
-        insert_query = """
-        INSERT INTO versiones_documento (
-            id_version, id_documento, numero_version, fecha_creacion,
-            creado_por, comentario_version, tamano_bytes, hash_contenido,
-            ubicacion_almacenamiento_tipo, ubicacion_almacenamiento_ruta,
-            ubicacion_almacenamiento_parametros, nombre_original,
-            extension, mime_type, metadatos_extraidos, texto_extraido,
-            estado_ocr, miniaturas_generadas
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-        
-        insert_params = (
-            version_id, doc_id, new_version_number, now,
-            user_id, comentario_version, tamano_bytes, hash_contenido,
-            ubicacion_tipo, ubicacion_ruta, json.dumps(ubicacion_parametros),
-            nombre_original, extension, mime_type, json.dumps(metadatos_extraidos),
-            texto_extraido, estado_ocr, miniaturas_generadas
+       
+        # Get fields from body
+        id_cliente = body['id_cliente']
+        filename = body['filename']
+        content_type = body.get('content_type', 'application/octet-stream')
+        # NEW: Check if this is a new version of an existing document
+        parent_document_id = body.get('parent_document_id')
+       
+        # Generate document ID (NEW: use parent_document_id if this is a new version)
+        doc_id = parent_document_id if parent_document_id else generate_uuid()
+       
+        # Initialize S3 client
+        import boto3
+        from botocore.config import Config
+       
+        # Configuración de reintentos para servicios AWS
+        retry_config = Config(
+            retries={
+                'max_attempts': 3,
+                'mode': 'standard'
+            }
         )
-        
-        execute_query(insert_query, insert_params, fetch=False)
-        
-        # Update document's current version
-        update_query = """
-        UPDATE documentos
-        SET version_actual = %s,
-            fecha_modificacion = %s,
-            modificado_por = %s
-        WHERE id_documento = %s
-        """
-        
-        execute_query(update_query, (new_version_number, now, user_id, doc_id), fetch=False)
-        
-        # Log version creation
-        audit_data = {
-            'fecha_hora': now,
-            'usuario_id': user_id,
-            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
-            'accion': 'crear',
-            'entidad_afectada': 'version_documento',
-            'id_entidad_afectada': version_id,
-            'detalles': json.dumps({
-                'id_documento': doc_id,
-                'numero_version': new_version_number,
-                'nombre_archivo': nombre_original
-            }),
-            'resultado': 'éxito'
+       
+        s3_client = boto3.client('s3', config=retry_config)
+       
+        # Definir el bucket y la ruta en S3
+        upload_bucket = 'gestor-documental-bancario-documents-input'
+        # NEW: Include version info in the S3 key if it's a new version
+        folder_prefix = "incoming" if parent_document_id else "incoming"
+        s3_key = f"{folder_prefix}/{doc_id}/{filename}"
+       
+        # Generar URL prefirmada para carga directa a S3 con metadatos
+        presigned_post = s3_client.generate_presigned_post(
+            Bucket=upload_bucket,
+            Key=s3_key,
+            Fields={
+                'Content-Type': content_type,
+                'x-amz-meta-client-id': id_cliente,
+                'x-amz-meta-document-id': doc_id,
+                # NEW: Add metadata to indicate if this is a new version
+                'x-amz-meta-is-new-version': 'true' if parent_document_id else 'false'
+            },
+            Conditions=[
+                ['content-length-range', 1, 20 * 1024 * 1024],
+                ['eq', '$Content-Type', content_type],
+                ['eq', '$x-amz-meta-client-id', id_cliente],
+                ['eq', '$x-amz-meta-document-id', doc_id],
+                ['eq', '$x-amz-meta-is-new-version', 'true' if parent_document_id else 'false']
+            ],
+            ExpiresIn=900
+        )
+       
+        # Preparar respuesta con instrucciones y URL para carga
+        upload_instructions = {
+            'message': 'URL generada exitosamente. Utilice esta URL para subir el archivo directamente a S3.',
+            'id_documento': doc_id,
+            'upload_url': presigned_post['url'],
+            'upload_fields': presigned_post['fields'],
+            'metadata': {
+                'client-id': id_cliente,
+                'document-id': doc_id,
+                'is-new-version': 'true' if parent_document_id else 'false'
+            },
+            'ruta_s3': f"{folder_prefix}/{doc_id}/",
+            'expira_en': 900
         }
-        
-        insert_audit_record(audit_data)
-        
+       
+        # Registrar en auditoría
+        try:
+            audit_data = {
+                'fecha_hora': datetime.datetime.now(),
+                'usuario_id': user_id,
+                'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+                'accion': 'generar_url_carga' + ('_nueva_version' if parent_document_id else ''),
+                'entidad_afectada': 'documento',
+                'id_entidad_afectada': doc_id,
+                'detalles': json.dumps({
+                    'id_cliente': id_cliente,
+                    'filename': filename,
+                    'content_type': content_type,
+                    'is_new_version': bool(parent_document_id)
+                }),
+                'resultado': 'éxito'
+            }
+           
+            insert_audit_record(audit_data)
+        except Exception as audit_error:
+            logger.warning(f"Error al registrar auditoría (no crítico): {str(audit_error)}")
+       
         return {
             'statusCode': 201,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({
-                'message': 'Document version created successfully',
-                'document_id': doc_id,
-                'version_id': version_id,
-                'version_number': new_version_number
-            })
+            'body': json.dumps(upload_instructions)
         }
-        
+       
     except Exception as e:
-        logger.error(f"Error creating document version: {str(e)}")
+        logger.error(f"Error al crear documento: {str(e)}")
         return {
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({'error': f'Error creating document version: {str(e)}'})
+            'body': json.dumps({'error': f'Error al crear documento: {str(e)}'})
         }
-
 def get_document_history(event, context):
     """Gets the history of changes for a document"""
     try:
