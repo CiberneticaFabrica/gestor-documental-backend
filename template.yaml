@@ -791,6 +791,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}
             Method: DELETE
+        DocumentMoveOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/move
+            Method: OPTIONS
+        DocumentMove:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/move
+            Method: POST
            
         # Document versions routes
         DocumentVersionsOptions:

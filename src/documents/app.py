@@ -50,6 +50,10 @@ def lambda_handler(event, context):
             doc_id = path.split('/')[2]
             event['pathParameters'] = {'id': doc_id}
             return delete_document(event, context)
+        elif http_method == 'POST' and path.startswith('/documents/') and path.endswith('/move'):
+            doc_id = path.split('/')[2]
+            event['pathParameters'] = {'id': doc_id}
+            return move_document(event, context)
         
         # Document versions routes
         elif http_method == 'GET' and path.startswith('/documents/') and path.endswith('/versions'):
@@ -1703,6 +1707,7 @@ def create_document_version(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al crear documento: {str(e)}'})
         }
+
 def get_document_history(event, context):
     """Gets the history of changes for a document"""
     try:
@@ -1832,4 +1837,200 @@ def get_document_history(event, context):
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document history: {str(e)}'})
+        }
+    
+def move_document(event, context):
+    """Moves a document to a different folder"""
+    try:
+        # Validate session
+        user_id, error_response = validate_session(event, 'documentos.editar')
+        if error_response:
+            return error_response
+        
+        # Get document ID
+        doc_id = event['pathParameters']['id']
+        
+        # Get request body
+        body = json.loads(event['body'])
+        
+        # Validate required fields
+        if 'id_carpeta_destino' not in body:
+            return {
+                'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Missing required field: id_carpeta_destino'})
+            }
+        
+        target_folder_id = body['id_carpeta_destino']
+        
+        # Check if document exists and get current folder
+        check_query = """
+        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por,
+               c1.nombre_carpeta as nombre_carpeta_actual, c1.ruta_completa as ruta_actual
+        FROM documentos d
+        LEFT JOIN carpetas c1 ON d.id_carpeta = c1.id_carpeta
+        WHERE d.id_documento = %s AND d.estado != 'eliminado'
+        """
+        
+        doc_result = execute_query(check_query, (doc_id,))
+        if not doc_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Document not found or already deleted'})
+            }
+        
+        document = doc_result[0]
+        current_folder_id = document['id_carpeta']
+        
+        # If target folder is the same as current folder, return success without changes
+        if current_folder_id == target_folder_id:
+            return {
+                'statusCode': 200,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({
+                    'message': 'Document is already in the specified folder',
+                    'id_documento': doc_id
+                })
+            }
+        
+        # Check if target folder exists
+        if target_folder_id:
+            folder_query = """
+            SELECT id_carpeta, nombre_carpeta, ruta_completa
+            FROM carpetas
+            WHERE id_carpeta = %s
+            """
+            
+            folder_result = execute_query(folder_query, (target_folder_id,))
+            if not folder_result:
+                return {
+                    'statusCode': 400,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                    'body': json.dumps({'error': 'Target folder not found'})
+                }
+            
+            target_folder = folder_result[0]
+        else:
+            # If target folder is null (root level)
+            target_folder = {'id_carpeta': None, 'nombre_carpeta': 'Root', 'ruta_completa': '/'}
+        
+        # Check admin permissions once - we'll use this for both checks
+        admin_query = """
+        SELECT COUNT(*) as is_admin
+        FROM usuarios_roles ur
+        JOIN roles_permisos rp ON ur.id_rol = rp.id_rol
+        JOIN permisos p ON rp.id_permiso = p.id_permiso
+        WHERE ur.id_usuario = %s AND p.codigo_permiso = 'documentos.editar'
+        """
+        
+        admin_result = execute_query(admin_query, (user_id,))
+        is_admin = admin_result[0]['is_admin'] > 0 if admin_result else False
+        
+        # Check if user has permission to modify the document
+        if document['creado_por'] != user_id and not is_admin:
+            # If user is not the creator or an admin, check folder-level permissions for source folder
+            if current_folder_id:
+                access_query = """
+                SELECT COUNT(*) as has_write_access
+                FROM permisos_carpetas pc
+                WHERE pc.id_carpeta = %s AND pc.tipo_permiso IN ('escritura', 'administracion') AND (
+                    (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
+                    (pc.id_entidad IN (
+                        SELECT ug.id_grupo
+                        FROM usuarios_grupos ug
+                        WHERE ug.id_usuario = %s
+                    ) AND pc.tipo_entidad = 'grupo')
+                )
+                """
+                
+                access_result = execute_query(access_query, (current_folder_id, user_id, user_id))
+                if not access_result or access_result[0]['has_write_access'] == 0:
+                    return {
+                        'statusCode': 403,
+                        'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                        'body': json.dumps({'error': 'You do not have permission to modify this document'})
+                    }
+        
+        # Check if user has permission to write to target folder
+        if target_folder_id and not is_admin and document['creado_por'] != user_id:
+            # If user is not the creator or an admin, check folder-level permissions for target folder
+            access_query = """
+            SELECT COUNT(*) as has_write_access
+            FROM permisos_carpetas pc
+            WHERE pc.id_carpeta = %s AND pc.tipo_permiso IN ('escritura', 'administracion') AND (
+                (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
+                (pc.id_entidad IN (
+                    SELECT ug.id_grupo
+                    FROM usuarios_grupos ug
+                    WHERE ug.id_usuario = %s
+                ) AND pc.tipo_entidad = 'grupo')
+            )
+            """
+            
+            access_result = execute_query(access_query, (target_folder_id, user_id, user_id))
+            if not access_result or access_result[0]['has_write_access'] == 0:
+                return {
+                    'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                    'body': json.dumps({'error': 'You do not have permission to add documents to the target folder'})
+                }
+        
+        # Update document's folder
+        update_query = """
+        UPDATE documentos
+        SET id_carpeta = %s,
+            fecha_modificacion = %s,
+            modificado_por = %s
+        WHERE id_documento = %s
+        """
+        
+        now = datetime.datetime.now()
+        execute_query(update_query, (target_folder_id, now, user_id, doc_id), fetch=False)
+        
+        # Log document move in audit
+        audit_data = {
+            'fecha_hora': now,
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'mover',
+            'entidad_afectada': 'documento',
+            'id_entidad_afectada': doc_id,
+            'detalles': json.dumps({
+                'titulo': document['titulo'],
+                'carpeta_origen_id': current_folder_id,
+                'carpeta_origen_nombre': document.get('nombre_carpeta_actual', 'Root'),
+                'carpeta_origen_ruta': document.get('ruta_actual', '/'),
+                'carpeta_destino_id': target_folder_id,
+                'carpeta_destino_nombre': target_folder.get('nombre_carpeta', 'Root'),
+                'carpeta_destino_ruta': target_folder.get('ruta_completa', '/')
+            }),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({
+                'message': 'Document moved successfully',
+                'id_documento': doc_id,
+                'carpeta_origen': {
+                    'id': current_folder_id,
+                    'nombre': document.get('nombre_carpeta_actual', 'Root')
+                },
+                'carpeta_destino': {
+                    'id': target_folder_id,
+                    'nombre': target_folder.get('nombre_carpeta', 'Root')
+                }
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"Error moving document: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error moving document: {str(e)}'})
         }
