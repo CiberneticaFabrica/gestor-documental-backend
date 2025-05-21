@@ -860,6 +860,7 @@ def create_document(event, context):
                 'Content-Type': content_type,
                 'x-amz-meta-client-id': id_cliente,
                 'x-amz-meta-document-id': doc_id,
+                
                 # NEW: Add metadata to indicate if this is a new version
                 'x-amz-meta-is-new-version': 'true' if parent_document_id else 'false'
             },
@@ -1297,7 +1298,7 @@ def list_document_versions(event, context):
         SELECT v.id_version, v.numero_version, v.fecha_creacion,
                v.creado_por, u.nombre_usuario as creado_por_usuario,
                v.comentario_version, v.tamano_bytes, v.nombre_original,
-               v.extension, v.mime_type, v.estado_ocr,
+               v.extension, v.mime_type, v.estado_ocr,v.id_documento,
                v.ubicacion_almacenamiento_tipo, v.ubicacion_almacenamiento_ruta,
                CASE WHEN v.numero_version = d.version_actual THEN TRUE ELSE FALSE END as es_version_actual
         FROM versiones_documento v

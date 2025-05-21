@@ -168,16 +168,11 @@ def validate_session(event, required_permission=None):
         return user_id, {'statusCode': 403, 'headers': add_cors_headers({'Content-Type': 'application/json'}), 'body': json.dumps({'error': f'No tiene el permiso requerido: {required_permission}'})}
     
     return user_id, None
-
-def call_generar_solicitudes(cliente_id):
-    """Llama al procedimiento que genera solicitudes documentales para un cliente"""
-    query = "CALL generar_solicitudes_documentos_cliente(%s)"
-    return execute_query(query, (cliente_id,), fetch=False)
-        
-def call_crear_estructura_carpetas(cliente_id):
+     
+def call_crear_estructura_carpetas(cliente_id, usuario_ejecutor):
     """Llama al procedimiento que crea la estructura de carpetas para un cliente"""
-    query = "CALL crear_estructura_carpetas_cliente(%s)"
-    return execute_query(query, (cliente_id,), fetch=False)
+    query = "CALL crear_estructura_carpetas_cliente(%s, %s)"
+    return execute_query(query, (cliente_id, usuario_ejecutor), fetch=False)
  
 def list_clients(event, context):
     """Lista clientes con paginación y filtros"""
@@ -904,8 +899,8 @@ def create_client(event, context):
         execute_query(insert_query, insert_params, fetch=False)
 
         # Llamar a los procedimientos para generar solicitudes y crear estructura de carpetas
-        call_generar_solicitudes(client_id)
-        call_crear_estructura_carpetas(client_id)
+   
+        call_crear_estructura_carpetas(client_id,user_id)
         
         # Crear entrada inicial en la caché de vista
         cache_entry = {
@@ -2231,8 +2226,6 @@ def update_document_request(event, context):
             'body': json.dumps({'error': f'Error al actualizar solicitud de documento: {str(e)}'})
         }
 
-
-
 def calculate_document_completeness(client_id):
     """Calcula el nivel de completitud documental del cliente"""
     try:
@@ -2848,8 +2841,6 @@ def get_expiring_documents(event, context):
             'body': json.dumps({'error': f'Error al obtener documentos por vencer: {str(e)}'})
         }
 
-
-
 def get_client_document_completeness(event, context):
     """Calcula y devuelve la completitud documental de un cliente"""
     try:
@@ -3138,8 +3129,6 @@ def info_calculate_document_completeness(client_id):
             'documentos_vencidos': 0,
             'error': str(e)
         }
-
-
 
 def get_client_document_risk(event, context):
     """Calcula y devuelve el riesgo documental de un cliente"""
@@ -3478,8 +3467,6 @@ def info_calculate_document_risk(client_id):
             'error': str(e)
         }
 
-
-
 def track_document_request(event, context):
     """Seguimiento de solicitudes de documentos para un cliente específico"""
     try:
@@ -3594,6 +3581,22 @@ def track_document_request(event, context):
                 req['fecha_solicitud'] = req['fecha_solicitud'].isoformat()
             if 'fecha_limite' in req and req['fecha_limite']:
                 req['fecha_limite'] = req['fecha_limite'].isoformat()
+            
+            # Obtener información del documento recibido si existe
+            if req['id_documento_recibido']:
+                doc_query = """
+                SELECT d.codigo_documento, d.titulo, d.fecha_creacion,
+                       td.nombre_tipo, v.nombre_original
+                FROM documentos d
+                JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+                JOIN versiones_documento v ON d.id_documento = v.id_documento AND d.version_actual = v.numero_version
+                WHERE d.id_documento = %s
+                """
+                doc_result = execute_query(doc_query, (req['id_documento_recibido'],))
+                if doc_result:
+                    req['documento_recibido'] = doc_result[0]
+                    if 'fecha_creacion' in req['documento_recibido'] and req['documento_recibido']['fecha_creacion']:
+                        req['documento_recibido']['fecha_creacion'] = req['documento_recibido']['fecha_creacion'].isoformat()
         
         # Obtener estadísticas de seguimiento
         stats_query = """
@@ -3648,6 +3651,28 @@ def track_document_request(event, context):
             'tendencia_temporal': timeline
         }
         
+        # Registrar en auditoría
+        audit_data = {
+            'fecha_hora': datetime.datetime.now(),
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'consultar',
+            'entidad_afectada': 'solicitudes_documento',
+            'id_entidad_afectada': client_id,
+            'detalles': json.dumps({
+                'nombre_cliente': client['nombre_razon_social'],
+                'filtros_aplicados': {
+                    'estado': estado,
+                    'dias_limite': dias_limite,
+                    'fecha_inicio': fecha_inicio,
+                    'fecha_fin': fecha_fin
+                }
+            }),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
         return {
             'statusCode': 200,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
@@ -3661,4 +3686,5 @@ def track_document_request(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener seguimiento de solicitudes: {str(e)}'})
         }
+ 
 

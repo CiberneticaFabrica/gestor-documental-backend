@@ -42,6 +42,10 @@ def lambda_handler(event, context):
             folder_id = path.split('/')[2]
             event['pathParameters'] = {'id': folder_id}
             return get_folder(event, context)
+        elif http_method == 'GET' and path.startswith('/clients/') and path.endswith('/folders'):
+            client_id = path.split('/')[2]
+            event['pathParameters'] = {'id': client_id}
+            return get_client_folder_structure(event, context)
         elif http_method == 'POST' and path == '/folders':
             return create_folder(event, context)
         elif http_method == 'PUT' and path.startswith('/folders/') and len(path.split('/')) == 3:
@@ -340,6 +344,206 @@ def list_folders(event, context):
             'body': json.dumps({'error': f'Error al listar carpetas: {str(e)}'})
         }
 
+def get_client_folder_structure(event, context):
+    """Obtiene la estructura de carpetas de un cliente específico"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'carpetas.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener ID del cliente
+        client_id = event['pathParameters']['id']
+        logger.info(f"Obteniendo estructura de carpetas para el cliente con ID: {client_id}")
+        
+        # Verificar si el cliente existe
+        check_query = """
+        SELECT id_cliente, codigo_cliente, nombre_razon_social, estado
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_result = execute_query(check_query, (client_id,))
+        logger.info(f"Resultado de verificación de cliente: {client_result}")
+        
+        if not client_result:
+            logger.warning(f"Cliente con ID {client_id} no encontrado")
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Cliente no encontrado'})
+            }
+        
+        client = client_result[0]
+        logger.info(f"Cliente encontrado: {client['nombre_razon_social']} (Código: {client['codigo_cliente']})")
+        
+        # Para manejar múltiples conjuntos de resultados (varios SELECT del stored procedure),
+        # necesitamos usar una conexión directa en lugar de execute_query()
+        conn = get_connection()  # Usamos la función del módulo común que ya configura pymysql.cursors.DictCursor
+        cursor = conn.cursor()   # No necesitamos especificar dictionary=True porque ya está configurado en get_connection()
+        
+        try:
+            logger.info(f"Ejecutando procedimiento almacenado con cliente_id: {client_id}")
+            cursor.execute("CALL obtener_estructura_documentos_cliente(%s)", (client_id,))
+            
+            # Obtener el primer conjunto de resultados: información del cliente
+            client_info = cursor.fetchall()
+            client_detail = client_info[0] if client_info else {}
+            logger.info(f"Información del cliente obtenida: {client_detail}")
+            
+            # Siguiente conjunto: estructura de carpetas
+            has_more = cursor.nextset()
+            folders_structure = cursor.fetchall() if has_more else []
+            logger.info(f"Estructura de carpetas obtenida: {len(folders_structure)} carpetas")
+            
+            # Siguiente conjunto: documentos del cliente
+            has_more = cursor.nextset()
+            client_documents = cursor.fetchall() if has_more else []
+            logger.info(f"Documentos del cliente obtenidos: {len(client_documents)} documentos")
+            
+            # Siguiente conjunto: documentos solicitados pendientes
+            has_more = cursor.nextset()
+            pending_documents = cursor.fetchall() if has_more else []
+            logger.info(f"Documentos solicitados pendientes: {len(pending_documents)} documentos")
+            
+            # Último conjunto: resumen de documentos por categoría
+            has_more = cursor.nextset()
+            categories_summary = cursor.fetchall() if has_more else []
+            logger.info(f"Resumen de categorías obtenido: {len(categories_summary)} categorías")
+            
+        finally:
+            cursor.close()
+            conn.close()
+        
+        # Procesar las categorías y documentos faltantes
+        categories = []
+        for category in categories_summary:
+            # Procesar documentos faltantes (si están en formato JSON)
+            missing_docs = []
+            if 'documentos_faltantes' in category and category['documentos_faltantes']:
+                try:
+                    if isinstance(category['documentos_faltantes'], str):
+                        missing_docs = json.loads(category['documentos_faltantes'])
+                    else:
+                        missing_docs = category['documentos_faltantes']
+                        
+                    # Filtrar valores nulos del array
+                    missing_docs = [doc for doc in missing_docs if doc is not None]
+                except Exception as e:
+                    logger.warning(f"Error al parsear documentos_faltantes: {e}")
+            
+            # Crear estructura de categoría
+            category_data = {
+                'id': category['id_categoria_bancaria'],
+                'nombre': category['nombre_categoria'],
+                'documentos_existentes': int(category.get('documentos_existentes', 0)),
+                'documentos_disponibles': int(category.get('documentos_disponibles', 0)),
+                'documentos_faltantes': missing_docs
+            }
+            
+            categories.append(category_data)
+        
+        # Organizar la estructura de carpetas en formato jerárquico
+        folders_hierarchy = organize_folders_hierarchy(folders_structure)
+        
+        # Organizar documentos por carpeta
+        documents_by_folder = {}
+        for doc in client_documents:
+            folder_id = doc.get('id_carpeta')
+            if folder_id not in documents_by_folder:
+                documents_by_folder[folder_id] = []
+            documents_by_folder[folder_id].append({
+                'id': doc.get('id_documento'),
+                'codigo': doc.get('codigo_documento'),
+                'titulo': doc.get('titulo'),
+                'tipo_id': doc.get('id_tipo_documento'),
+                'tipo': doc.get('tipo_documento'),
+                'estado': doc.get('estado'),
+                'fecha_creacion': doc.get('fecha_creacion'),
+                'fecha_modificacion': doc.get('fecha_modificacion'),
+                'confianza_extraccion': doc.get('confianza_extraccion'),
+                'validado': doc.get('validado_manualmente') == 1
+            })
+        
+        # Registrar en auditoría
+        audit_data = {
+            'fecha_hora': datetime.datetime.now(),
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'consultar',
+            'entidad_afectada': 'estructura_documentos_cliente',
+            'id_entidad_afectada': client_id,
+            'detalles': json.dumps({'nombre_cliente': client['nombre_razon_social']}),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
+        # Preparar respuesta completa
+        response = {
+            'cliente': {
+                'id': client_id,
+                'codigo': client['codigo_cliente'],
+                'nombre': client['nombre_razon_social'],
+                'tipo_cliente': client_detail.get('tipo_cliente'),
+                'segmento_bancario': client_detail.get('segmento_bancario'),
+                'nivel_riesgo': client_detail.get('nivel_riesgo'),
+                'estado_documental': client_detail.get('estado_documental')
+            },
+            'estructura_carpetas': folders_hierarchy,
+            'documentos_por_carpeta': documents_by_folder,
+            'documentos_pendientes': pending_documents,
+            'categorias': categories
+        }
+        
+        logger.info(f"Devolviendo respuesta exitosa con {len(categories)} categorías y {len(folders_structure)} carpetas")
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener estructura de documentos del cliente: {str(e)}", exc_info=True)
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener estructura de documentos del cliente: {str(e)}'})
+        }
+
+def organize_folders_hierarchy(folders):
+    """Organiza las carpetas en una estructura jerárquica"""
+    # Diccionario para almacenar las carpetas por su ID
+    folders_dict = {}
+    root_folders = []
+    
+    # Primero, crear un diccionario con todas las carpetas
+    for folder in folders:
+        folder_id = folder.get('id_carpeta')
+        folders_dict[folder_id] = {
+            'id': folder_id,
+            'nombre': folder.get('nombre_carpeta'),
+            'descripcion': folder.get('descripcion'),
+            'ruta': folder.get('ruta_completa'),
+            'fecha_creacion': folder.get('fecha_creacion'),
+            'fecha_modificacion': folder.get('fecha_modificacion'),
+            'politicas': folder.get('politicas'),
+            'subcarpetas': []
+        }
+    
+    # Luego, construir la jerarquía
+    for folder in folders:
+        folder_id = folder.get('id_carpeta')
+        parent_id = folder.get('carpeta_padre_id')
+        
+        if parent_id is None:
+            # Es una carpeta raíz
+            root_folders.append(folders_dict[folder_id])
+        elif parent_id in folders_dict:
+            # Agregar como subcarpeta
+            folders_dict[parent_id]['subcarpetas'].append(folders_dict[folder_id])
+    
+    return root_folders
 # def list_folders(event, context):
 #     """Lista la estructura jerárquica de carpetas"""
 #     try:
