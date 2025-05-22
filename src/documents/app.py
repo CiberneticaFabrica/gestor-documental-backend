@@ -5,6 +5,7 @@ import secrets
 import hashlib
 import logging
 import datetime
+import requests
 
 from common.db import (
     execute_query,
@@ -796,7 +797,6 @@ def get_document(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error getting document: {str(e)}'})
         }
-
 
 def create_document(event, context):
     """

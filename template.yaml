@@ -8,16 +8,16 @@ Description: >
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 60
-    MemorySize: 128
+    Timeout: 600
+    MemorySize: 256
     Tracing: Active
     Runtime: python3.9
     Environment:
       Variables:
         DB_HOST: !Ref DBHost
         DB_USER: !Ref DBUser
-        DB_PASSWORD: !Ref DBPassword
-        DB_NAME: !Ref DBName
+        DB_PASSWORD: kYcwbOLpRKX1TpTMiAC6
+        DB_NAME: gestor_documental
         SESSION_EXPIRY_MINUTES: 1440
   Api:
     TracingEnabled: true
@@ -1430,6 +1430,47 @@ Resources:
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /audit-logs/security
+            Method: GET
+  MigrationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: migration.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        MigrationOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /migration
+            Method: OPTIONS
+        MigrationPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /migration
+            Method: POST
+        MigrationStatusOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /migration/status
+            Method: OPTIONS
+        MigrationStatusGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /migration/status
             Method: GET
   ApplicationResourceGroup:
     Type: AWS::ResourceGroups::Group
