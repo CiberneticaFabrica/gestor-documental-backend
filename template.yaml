@@ -900,6 +900,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/preview
             Method: GET
+          VersionPreviewOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /version/{id}/preview
+            Method: OPTIONS
+        GetVersionPreview:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /version/{id}/preview
+            Method: GET
         DocumentDownloadOptions:
           Type: Api
           Properties:
@@ -1010,7 +1022,19 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /folders/{id}/documents
             Method: GET
-            
+        # Rutas de gestión de carpetas de clientes
+        ClientFoldersOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/folders
+            Method: OPTIONS
+        GetClientFolders:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients/{id}/folders
+            Method: GET   
         # Rutas de gestión de permisos de carpetas
         FolderPermissionsOptions:
           Type: Api

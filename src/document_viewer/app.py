@@ -41,7 +41,7 @@ def lambda_handler(event, context):
                 'body': ''
             }
         
-        # Extraer ID del documento de la ruta
+        # Extraer partes de la ruta para determinar el tipo de solicitud
         path_parts = path.split('/')
         if len(path_parts) < 4:
             return {
@@ -50,21 +50,28 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'Ruta de solicitud inválida'})
             }
         
-        doc_id = path_parts[2]
+        # Determinar el tipo de recurso y la acción
+        resource_type = path_parts[1]
+        resource_id = path_parts[2]
         action = path_parts[3]
         
-        # Enrutar a la función correspondiente según la acción
+        # Enrutar a la función correspondiente según el tipo de recurso y la acción
         if http_method == 'GET':
-            if action == 'content':
-                return get_document_content(event, doc_id)
-            elif action == 'preview':
-                return get_document_preview(event, doc_id)
-            elif action == 'download':
-                return generate_download_url(event, doc_id)
-            elif action == 'extracted':
-                return get_extracted_data(event, doc_id)
-            elif action == 'metadata':
-                return get_document_metadata(event, doc_id)
+            # Ruta para operaciones con versiones específicas
+            if resource_type == 'version' and action == 'preview':
+                return get_version_preview(event, resource_id)
+            # Rutas para operaciones con documentos
+            elif resource_type == 'document':
+                if action == 'content':
+                    return get_document_content(event, resource_id)
+                elif action == 'preview':
+                    return get_document_preview(event, resource_id)
+                elif action == 'download':
+                    return generate_download_url(event, resource_id)
+                elif action == 'extracted':
+                    return get_extracted_data(event, resource_id)
+                elif action == 'metadata':
+                    return get_document_metadata(event, resource_id)
         
         # Si no coincide con ninguna ruta definida
         return {
@@ -80,7 +87,7 @@ def lambda_handler(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})
         }
-
+    
 def validate_session(event, required_permission=None):
     """Valida la sesión del usuario y verifica permisos si es necesario"""
     auth_header = event.get('headers', {}).get('Authorization', '')
@@ -186,7 +193,8 @@ def get_current_version(doc_id):
            v.ubicacion_almacenamiento_tipo, v.ubicacion_almacenamiento_ruta,
            v.ubicacion_almacenamiento_parametros, v.nombre_original,
            v.extension, v.mime_type, v.metadatos_extraidos,
-           v.miniaturas_generadas
+           v.miniaturas_generadas,
+           v.ubicacion_miniatura
     FROM documentos d
     JOIN versiones_documento v ON d.id_documento = v.id_documento
     WHERE d.id_documento = %s AND v.numero_version = d.version_actual
@@ -327,6 +335,202 @@ def get_document_preview(event, doc_id):
                 'body': json.dumps({'error': 'No se encontró la versión actual del documento'})
             }
         
+        # Variables para almacenar URLs y respuesta
+        document_url = None
+        thumbnail_url = None
+        response_data = {}
+        
+        # Agregar logs para depuración
+        logger.info(f"Versión obtenida: {version}")
+        logger.info(f"ubicacion_miniatura: {version.get('ubicacion_miniatura')}")
+        logger.info(f"miniaturas_generadas: {version.get('miniaturas_generadas')}")
+        
+        # 1. Generar URL para el documento original (siempre)
+        try:
+            storage_path = version['ubicacion_almacenamiento_ruta']
+            
+            if '/' in storage_path:
+                parts = storage_path.split('/', 1)
+                bucket = parts[0]
+                key = parts[1]
+            else:
+                bucket = BUCKET_NAME
+                key = storage_path
+            
+            # URL para el documento original
+            document_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': bucket,
+                    'Key': key,
+                    'ResponseContentType': version['mime_type'],
+                    'ResponseContentDisposition': f'inline; filename="{version["nombre_original"]}"'
+                },
+                ExpiresIn=URL_EXPIRATION
+            )
+            
+            # Agregar datos del documento original
+            response_data['url_documento'] = document_url
+            response_data['mime_type'] = version['mime_type']
+            response_data['nombre_archivo'] = version['nombre_original']
+            response_data['tamano_bytes'] = version['tamano_bytes']
+            response_data['expiracion_url'] = URL_EXPIRATION
+        except ClientError as e:
+            logger.error(f"Error al generar URL del documento original: {str(e)}")
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Documento original no encontrado'})
+            }
+        
+        # 2. Generar URL para la miniatura
+        # Verificar si el campo ubicacion_miniatura existe y no es None/vacío
+        thumbnail_path = version.get('ubicacion_miniatura')
+        
+        if thumbnail_path and thumbnail_path.strip():
+            try:
+                # Extraer correctamente bucket y key para la miniatura
+                if '/' in thumbnail_path:
+                    parts = thumbnail_path.split('/', 1)
+                    bucket = parts[0]
+                    key = parts[1]
+                else:
+                    bucket = BUCKET_NAME
+                    key = thumbnail_path
+                
+                logger.info(f"Generando URL de miniatura para bucket={bucket}, key={key}")
+                
+                # URL para la miniatura
+                thumbnail_url = s3_client.generate_presigned_url(
+                    'get_object',
+                    Params={
+                        'Bucket': bucket,
+                        'Key': key,
+                        'ResponseContentType': 'image/jpeg',
+                        'ResponseContentDisposition': f'inline; filename="{os.path.basename(key)}"'
+                    },
+                    ExpiresIn=URL_EXPIRATION
+                )
+                
+                # Agregar datos de la miniatura a la respuesta
+                response_data['url_miniatura'] = thumbnail_url
+                response_data['miniatura_mime_type'] = 'image/jpeg'
+                response_data['miniatura_nombre'] = os.path.basename(key)
+                response_data['tiene_miniatura'] = True
+                
+                logger.info(f"URL de miniatura generada: {thumbnail_url}")
+            except ClientError as e:
+                logger.error(f"Error al generar URL de miniatura: {str(e)}")
+                response_data['tiene_miniatura'] = False
+                response_data['url_miniatura'] = None
+        else:
+            logger.warning(f"No se encontró ubicacion_miniatura en la versión del documento")
+            response_data['tiene_miniatura'] = False
+            response_data['url_miniatura'] = None
+            
+            # Programar generación de miniaturas si no existen
+            if not version.get('miniaturas_generadas'):
+                try:
+                    sqs_client = boto3.client('sqs')
+                    THUMBNAILS_QUEUE_URL = os.environ.get('THUMBNAILS_QUEUE_URL')
+                    
+                    if THUMBNAILS_QUEUE_URL:
+                        storage_path = version['ubicacion_almacenamiento_ruta']
+                        
+                        if '/' in storage_path:
+                            parts = storage_path.split('/', 1)
+                            bucket = parts[0]
+                            key = parts[1]
+                        else:
+                            bucket = BUCKET_NAME
+                            key = storage_path
+                        
+                        # Crear mensaje para generar miniaturas
+                        message = {
+                            'document_id': doc_id,
+                            'version_id': version['id_version'],
+                            'bucket': bucket,
+                            'key': key,
+                            'extension': version['extension'],
+                            'mime_type': version['mime_type']
+                        }
+                        
+                        # Enviar mensaje a SQS
+                        sqs_client.send_message(
+                            QueueUrl=THUMBNAILS_QUEUE_URL,
+                            MessageBody=json.dumps(message)
+                        )
+                        
+                        logger.info(f"Generación de miniaturas programada para documento {doc_id}")
+                except Exception as e:
+                    logger.error(f"Error al programar generación de miniaturas: {str(e)}")
+        
+        # Registrar acceso en auditoría
+        ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
+        log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response_data)
+        }
+    
+    except Exception as e:
+        logger.error(f"Error al obtener vista previa del documento: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener vista previa del documento: {str(e)}'})
+        } 
+
+def get_version_preview(event, version_id):
+    """Genera una vista previa de una versión específica del documento"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'documentos.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener información de la versión
+        version_query = """
+        SELECT v.id_version, v.id_documento, v.numero_version, v.tamano_bytes, v.hash_contenido,
+               v.ubicacion_almacenamiento_tipo, v.ubicacion_almacenamiento_ruta,
+               v.ubicacion_almacenamiento_parametros, v.nombre_original,
+               v.extension, v.mime_type, v.metadatos_extraidos,
+               v.miniaturas_generadas, v.ubicacion_miniatura
+        FROM versiones_documento v
+        WHERE v.id_version = %s
+        """
+        
+        version_result = execute_query(version_query, (version_id,))
+        if not version_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'No se encontró la versión especificada'})
+            }
+        
+        version = version_result[0]
+        doc_id = version['id_documento']
+        
+        # Verificar acceso al documento
+        document, error_response = check_document_access(user_id, doc_id)
+        if error_response:
+            return error_response
+        
+        # Convertir campos JSON a diccionarios
+        if version['ubicacion_almacenamiento_parametros']:
+            try:
+                version['ubicacion_almacenamiento_parametros'] = json.loads(version['ubicacion_almacenamiento_parametros'])
+            except:
+                version['ubicacion_almacenamiento_parametros'] = {}
+        
+        if version['metadatos_extraidos']:
+            try:
+                version['metadatos_extraidos'] = json.loads(version['metadatos_extraidos'])
+            except:
+                version['metadatos_extraidos'] = {}
+        
         # Verificar si hay miniaturas generadas
         if not version.get('miniaturas_generadas', False):
             # Si no hay miniaturas, programar su generación
@@ -351,7 +555,7 @@ def get_document_preview(event, doc_id):
                     # Crear mensaje para generar miniaturas
                     message = {
                         'document_id': doc_id,
-                        'version_id': version['id_version'],
+                        'version_id': version_id,
                         'bucket': bucket,
                         'key': key,
                         'extension': version['extension'],
@@ -364,7 +568,7 @@ def get_document_preview(event, doc_id):
                         MessageBody=json.dumps(message)
                     )
                     
-                    logger.info(f"Generación de miniaturas programada para documento {doc_id}")
+                    logger.info(f"Generación de miniaturas programada para versión {version_id} del documento {doc_id}")
             except Exception as e:
                 logger.error(f"Error al programar generación de miniaturas: {str(e)}")
             
@@ -395,7 +599,7 @@ def get_document_preview(event, doc_id):
                 
                 # Registrar acceso en auditoría
                 ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
-                log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+                log_document_access(user_id, doc_id, version_id, 'previsualizar_version', ip_address)
                 
                 return {
                     'statusCode': 200,
@@ -405,7 +609,8 @@ def get_document_preview(event, doc_id):
                         'mime_type': version['mime_type'],
                         'nombre_archivo': version['nombre_original'],
                         'tamano_bytes': version['tamano_bytes'],
-                        'expiracion_url': URL_EXPIRATION
+                        'expiracion_url': URL_EXPIRATION,
+                        'numero_version': version['numero_version']
                     })
                 }
             except ClientError as e:
@@ -444,7 +649,7 @@ def get_document_preview(event, doc_id):
                 
                 # Registrar acceso en auditoría
                 ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
-                log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+                log_document_access(user_id, doc_id, version_id, 'previsualizar_version', ip_address)
                 
                 return {
                     'statusCode': 200,
@@ -454,7 +659,8 @@ def get_document_preview(event, doc_id):
                         'mime_type': 'image/jpeg',
                         'nombre_archivo': f"{os.path.basename(key)}",
                         'es_miniatura': True,
-                        'expiracion_url': URL_EXPIRATION
+                        'expiracion_url': URL_EXPIRATION,
+                        'numero_version': version['numero_version']
                     })
                 }
             except ClientError as e:
@@ -488,7 +694,7 @@ def get_document_preview(event, doc_id):
             
             # Registrar acceso en auditoría
             ip_address = event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0')
-            log_document_access(user_id, doc_id, version['id_version'], 'previsualizar', ip_address)
+            log_document_access(user_id, doc_id, version_id, 'previsualizar_version', ip_address)
             
             return {
                 'statusCode': 200,
@@ -498,7 +704,8 @@ def get_document_preview(event, doc_id):
                     'mime_type': version['mime_type'],
                     'nombre_archivo': version['nombre_original'],
                     'tamano_bytes': version['tamano_bytes'],
-                    'expiracion_url': URL_EXPIRATION
+                    'expiracion_url': URL_EXPIRATION,
+                    'numero_version': version['numero_version']
                 })
             }
         except ClientError as e:
@@ -510,13 +717,13 @@ def get_document_preview(event, doc_id):
             }
     
     except Exception as e:
-        logger.error(f"Error al obtener vista previa del documento: {str(e)}")
+        logger.error(f"Error al obtener vista previa de la versión: {str(e)}")
         return {
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
-            'body': json.dumps({'error': f'Error al obtener vista previa del documento: {str(e)}'})
+            'body': json.dumps({'error': f'Error al obtener vista previa de la versión: {str(e)}'})
         }
-      
+
 def generate_download_url(event, doc_id):
     """Genera una URL para descarga del documento"""
     try:
