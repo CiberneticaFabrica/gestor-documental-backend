@@ -900,17 +900,17 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/preview
             Method: GET
-          VersionPreviewOptions:
+        DocumentPreviewVersionOptions:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
-            Path: /version/{id}/preview
+            Path: /documents/{id}/preview-version/{version_id}
             Method: OPTIONS
-        GetVersionPreview:
+        GetDocumentPreviewVersion:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
-            Path: /version/{id}/preview
+            Path: /documents/{id}/preview-version/{version_id}
             Method: GET
         DocumentDownloadOptions:
           Type: Api

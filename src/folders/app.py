@@ -406,16 +406,22 @@ def get_client_folder_structure(event, context):
             pending_documents = cursor.fetchall() if has_more else []
             logger.info(f"Documentos solicitados pendientes: {len(pending_documents)} documentos")
             
-            # Último conjunto: resumen de documentos por categoría
+            # Siguiente conjunto: resumen de documentos por categoría
             has_more = cursor.nextset()
             categories_summary = cursor.fetchall() if has_more else []
             logger.info(f"Resumen de categorías obtenido: {len(categories_summary)} categorías")
+            
+            # NUEVO: Sexto conjunto - resumen ejecutivo
+            has_more = cursor.nextset()
+            executive_summary = cursor.fetchall() if has_more else []
+            executive_data = executive_summary[0] if executive_summary else {}
+            logger.info(f"Resumen ejecutivo obtenido: {executive_data}")
             
         finally:
             cursor.close()
             conn.close()
         
-        # Procesar las categorías y documentos faltantes
+        # Procesar las categorías y documentos faltantes/existentes
         categories = []
         for category in categories_summary:
             # Procesar documentos faltantes (si están en formato JSON)
@@ -432,13 +438,28 @@ def get_client_folder_structure(event, context):
                 except Exception as e:
                     logger.warning(f"Error al parsear documentos_faltantes: {e}")
             
+            # NUEVO: Procesar documentos existentes detalle
+            existing_docs = []
+            if 'documentos_existentes_detalle' in category and category['documentos_existentes_detalle']:
+                try:
+                    if isinstance(category['documentos_existentes_detalle'], str):
+                        existing_docs = json.loads(category['documentos_existentes_detalle'])
+                    else:
+                        existing_docs = category['documentos_existentes_detalle']
+                        
+                    # Filtrar valores nulos del array
+                    existing_docs = [doc for doc in existing_docs if doc is not None]
+                except Exception as e:
+                    logger.warning(f"Error al parsear documentos_existentes_detalle: {e}")
+            
             # Crear estructura de categoría
             category_data = {
                 'id': category['id_categoria_bancaria'],
                 'nombre': category['nombre_categoria'],
                 'documentos_existentes': int(category.get('documentos_existentes', 0)),
                 'documentos_disponibles': int(category.get('documentos_disponibles', 0)),
-                'documentos_faltantes': missing_docs
+                'documentos_faltantes': missing_docs,
+                'documentos_existentes_detalle': existing_docs  # NUEVA PROPIEDAD
             }
             
             categories.append(category_data)
@@ -462,7 +483,12 @@ def get_client_folder_structure(event, context):
                 'fecha_creacion': doc.get('fecha_creacion'),
                 'fecha_modificacion': doc.get('fecha_modificacion'),
                 'confianza_extraccion': doc.get('confianza_extraccion'),
-                'validado': doc.get('validado_manualmente') == 1
+                'validado': doc.get('validado_manualmente') == 1,
+                # NUEVOS CAMPOS de información extraída por IA
+                'nombre_extraido': doc.get('nombre_extraido'),
+                'numero_identificacion_extraido': doc.get('numero_identificacion_extraido'),
+                'fecha_expiracion_extraida': doc.get('fecha_expiracion_extraida'),
+                'es_documento_identificacion': doc.get('es_documento_identificacion') == 1
             })
         
         # Registrar en auditoría
@@ -493,10 +519,19 @@ def get_client_folder_structure(event, context):
             'estructura_carpetas': folders_hierarchy,
             'documentos_por_carpeta': documents_by_folder,
             'documentos_pendientes': pending_documents,
-            'categorias': categories
+            'categorias': categories,
+            # NUEVO: Resumen ejecutivo
+            'resumen_ejecutivo': {
+                'total_documentos': int(executive_data.get('total_documentos_cliente', 0)),
+                'documentos_validados': int(executive_data.get('documentos_validados', 0)),
+                'documentos_pendientes_validacion': int(executive_data.get('documentos_pendientes_validacion', 0)),
+                'confianza_promedio': float(executive_data.get('confianza_promedio', 0.0)) if executive_data.get('confianza_promedio') else 0.0,
+                'documentos_identificacion': int(executive_data.get('documentos_identificacion', 0)),
+                'ultima_actualizacion': executive_data.get('ultima_actualizacion_documentos')
+            }
         }
         
-        logger.info(f"Devolviendo respuesta exitosa con {len(categories)} categorías y {len(folders_structure)} carpetas")
+        logger.info(f"Devolviendo respuesta exitosa con {len(categories)} categorías, {len(folders_structure)} carpetas y resumen ejecutivo")
         return {
             'statusCode': 200,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
@@ -510,7 +545,7 @@ def get_client_folder_structure(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener estructura de documentos del cliente: {str(e)}'})
         }
-
+        
 def organize_folders_hierarchy(folders):
     """Organiza las carpetas en una estructura jerárquica"""
     # Diccionario para almacenar las carpetas por su ID
