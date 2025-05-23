@@ -176,14 +176,32 @@ def get_creatio_contacts(cookies, count=10):
             "labCredScore", "labIsNonGrata", "CountryId", "CityId", "Zip",
             "GivenName", "Surname", "MiddleName"
         ]
+
+        # NUEVA LÓGICA: Calcular cuántos contactos ya fueron migrados
+        migrated_count_query = """
+        SELECT COUNT(*) as migrated_count
+        FROM contactos_migrados_creatio
+        """
+        
+        try:
+            migrated_result = execute_query(migrated_count_query)
+            skip_count = migrated_result[0]['migrated_count'] if migrated_result else 0
+            logger.info(f"Found {skip_count} already migrated contacts, skipping them")
+        except Exception as e:
+            logger.warning(f"Could not check migrated contacts count: {str(e)}, starting from beginning")
+            skip_count = 0
         
         # Build the OData query
         url = f"https://{CREATIO_INSTANCE}/0/odata/Contact"
         params = {
             '$filter': f"Type/Id eq {CLIENT_TYPE_ID}",
             '$select': ",".join(select_fields),
-            '$top': count
+            '$top': count,                  # Cantidad solicitada
+            '$skip': skip_count,            # Saltar los ya migrados
+            '$orderby': 'CreatedOn asc'     # Orden consistente
         }
+
+        logger.info(f"Querying Creatio with $top={count}, $skip={skip_count}")
         
         # Make the request
         response = requests.get(url, headers=headers, cookies=cookies, params=params)
@@ -342,6 +360,27 @@ def process_contact(contact, user_id, cookies):
     
     try:
         logger.info(f"Processing contact: {contact['Name']} (ID: {contact['Id']})")
+
+        # NUEVA VALIDACIÓN: Verificar si el contacto ya fue migrado
+        creatio_contact_id = contact['Id']
+        
+        migration_check_query = """
+        SELECT id_cliente, fecha_migracion, nombre_contacto
+        FROM contactos_migrados_creatio
+        WHERE creatio_contact_id = %s
+        """
+        
+        existing_migration = execute_query(migration_check_query, (creatio_contact_id,))
+        
+        if existing_migration:
+            logger.info(f"Contact {contact['Name']} (ID: {creatio_contact_id}) already migrated. Skipping.")
+            return {
+                "status": "skipped", 
+                "client_id": existing_migration[0]['id_cliente'],
+                "migration_id": None,
+                "message": f"Contact already migrated on {existing_migration[0]['fecha_migracion']}",
+                "documents_processed": {"documents_processed": 0, "documents_created": 0, "documents_updated": 0, "documents_error": 0}
+            }
     
         # Check if the contact already exists in our system by document ID (INN)
         documento_identificacion = contact.get('INN', '')
@@ -447,6 +486,32 @@ def process_contact(contact, user_id, cookies):
             """
             
             execute_query(update_query, update_params, fetch=False)
+
+            # NUEVO: Registrar migración exitosa de contacto (si no existe)
+            contact_migration_check = """
+            SELECT id FROM contactos_migrados_creatio WHERE creatio_contact_id = %s
+            """
+            existing_contact_migration = execute_query(contact_migration_check, (creatio_id,))
+            
+            if not existing_contact_migration:
+                contact_migration_id = generate_uuid()
+                contact_migration_query = """
+                INSERT INTO contactos_migrados_creatio (
+                    id, creatio_contact_id, id_cliente, nombre_contacto
+                ) VALUES (%s, %s, %s, %s)
+                """
+                
+                try:
+                    execute_query(contact_migration_query, (
+                        contact_migration_id,
+                        creatio_id,
+                        client_id,
+                        client_data['nombre_razon_social']
+                    ), fetch=False)
+                    
+                    logger.info(f"Contact migration record created for existing client {client_data['nombre_razon_social']}")
+                except Exception as contact_migration_error:
+                    logger.warning(f"Could not create contact migration record: {str(contact_migration_error)}")
             
             # Handle migration record - update if exists, otherwise insert
             migration_details = json.dumps({
@@ -510,25 +575,44 @@ def process_contact(contact, user_id, cookies):
             # Generate code based on client type
             now = datetime.datetime.now()
             date_part = now.strftime("%Y%m%d")
-            
+
             tipo_prefix = {
                 'persona_fisica': 'PF',
                 'empresa': 'EM',
                 'organismo_publico': 'OP'
             }[client_data['tipo_cliente']]
-            
-            # Get sequence for the code
-            seq_query = """
-            SELECT COUNT(*) as seq
-            FROM clientes
-            WHERE tipo_cliente = %s AND DATE(fecha_alta) = CURDATE()
-            """
-            
-            seq_result = execute_query(seq_query, (client_data['tipo_cliente'],))
-            sequence = (seq_result[0]['seq'] + 1) if seq_result else 1
-            
-            # Final code format
-            codigo_cliente = f"{tipo_prefix}-{date_part}-{sequence:04d}"
+
+            # Generate unique code with UUID - retry until unique
+            max_attempts = 100  # Very unlikely to need this many attempts
+            codigo_cliente = None
+
+            for attempt in range(max_attempts):
+                # Generate 4-character UUID suffix
+                uuid_suffix = str(uuid4()).replace('-', '')[:4].upper()
+                
+                # Create proposed code
+                proposed_code = f"{tipo_prefix}-{date_part}-{uuid_suffix}"
+                
+                # Check if this code already exists
+                check_query = """
+                SELECT COUNT(*) as count 
+                FROM clientes 
+                WHERE codigo_cliente = %s
+                """
+                
+                check_result = execute_query(check_query, (proposed_code,))
+                
+                if check_result[0]['count'] == 0:
+                    # Code is unique!
+                    codigo_cliente = proposed_code
+                    break
+                else:
+                    # Extremely rare case - UUID collision, try again
+                    logger.warning(f"UUID collision detected: {proposed_code}, retrying (attempt {attempt + 1})")
+
+            if codigo_cliente is None:
+                # This should never happen, but just in case
+                raise Exception(f"Could not generate unique client code after {max_attempts} attempts")
             
             # Insert client - FIX: Ensure the number of columns matches the number of values
             insert_query = """
@@ -574,9 +658,29 @@ def process_contact(contact, user_id, cookies):
             assert len(insert_params) == insert_query.count("%s"), "Mismatch in parameter count"
             
             execute_query(insert_query, insert_params, fetch=False)
+
+            # NUEVO: Registrar migración exitosa de contacto
+            contact_migration_id = generate_uuid()
+            contact_migration_query = """
+            INSERT INTO contactos_migrados_creatio (
+                id, creatio_contact_id, id_cliente, nombre_contacto
+            ) VALUES (%s, %s, %s, %s)
+            """
+            
+            try:
+                execute_query(contact_migration_query, (
+                    contact_migration_id,
+                    creatio_id,
+                    client_id,
+                    client_data['nombre_razon_social']
+                ), fetch=False)
+                
+                logger.info(f"Contact migration record created for {client_data['nombre_razon_social']}")
+            except Exception as contact_migration_error:
+                logger.warning(f"Could not create contact migration record: {str(contact_migration_error)}")
             
             # Generate relevant client structures
-            call_generar_solicitudes(client_id, user_id)
+            # call_generar_solicitudes(client_id, user_id)
             call_crear_estructura_carpetas(client_id, user_id)
             
             # Insert migration record
@@ -1009,6 +1113,7 @@ def fetch_and_process_creatio_documents(client_id, creatio_contact_id, cookies, 
         # Create summary
         created = sum(1 for f in processed_files if f.get('action') == 'created')
         updated = sum(1 for f in processed_files if f.get('action') == 'updated')
+        skipped = sum(1 for f in processed_files if f.get('status') == 'skipped') 
         errors = sum(1 for f in processed_files if f.get('status') == 'error')
         
         return {
@@ -1017,6 +1122,7 @@ def fetch_and_process_creatio_documents(client_id, creatio_contact_id, cookies, 
             'documents_processed': len(processed_files),
             'documents_created': created,
             'documents_updated': updated,
+            'documents_skipped': skipped,
             'documents_error': errors,
             'documents_details': processed_files
         }
@@ -1051,6 +1157,25 @@ def process_creatio_file(file, client_id, cookies, user_id, headers):
         content_type = file.get('Data@odata.mediaContentType', 'application/octet-stream')
         
         logger.info(f"Processing file: {file_name} (ID: {file_id})")
+
+        # NUEVA VALIDACIÓN: Verificar si el archivo ya fue migrado
+        migration_check_query = """
+        SELECT id_documento, fecha_migracion
+        FROM documentos_migrados_creatio
+        WHERE creatio_file_id = %s
+        """
+        
+        existing_migration = execute_query(migration_check_query, (file_id,))
+        
+        if existing_migration:
+            logger.info(f"File {file_name} (ID: {file_id}) already migrated. Skipping.")
+            return {
+                'status': 'skipped',
+                'creatio_file_id': file_id,
+                'file_name': file_name,
+                'document_id': existing_migration[0]['id_documento'],
+                'message': f"File already migrated on {existing_migration[0]['fecha_migracion']}"
+            }
         
         # Check if document already exists in our system
         # We'll use the Creatio file ID as a reference
@@ -1085,22 +1210,22 @@ def process_creatio_file(file, client_id, cookies, user_id, headers):
         # Create or update document in our system, passing the Creatio file ID
         if existing_doc_id:
             # Document exists - update with a new version
-            result = create_document_from_file(
+            result = create_document_from_file_improved(
                 temp_file_path, 
                 client_id, 
                 user_id, 
-                content_type, 
+                content_type=None, 
                 external_file_id=file_id,  # Pass Creatio file ID
                 parent_document_id=existing_doc_id
             )
             action = 'updated'
         else:
             # Document doesn't exist - create new
-            result = create_document_from_file(
+            result = create_document_from_file_improved(
                 temp_file_path, 
                 client_id, 
                 user_id, 
-                content_type,
+                content_type=None,
                 external_file_id=file_id  # Pass Creatio file ID
             )
             action = 'created'
@@ -1448,3 +1573,253 @@ def create_document_internal(id_cliente, filename, content_type='application/oct
             'success': False,
             'error': f'Error al crear documento: {str(e)}'
         }
+
+
+
+
+
+
+
+
+# Función mejorada para crear documentos con Content-Type correcto
+def create_document_from_file_improved(file_path, client_id, user_id, content_type=None, external_file_id=None, parent_document_id=None):
+    """
+    Creates a document with improved Content-Type handling
+    """
+    try:
+        # Extract filename from path
+        filename = os.path.basename(file_path)
+        
+        # Determine content type if not provided
+        if not content_type:
+            content_type = get_content_type_from_filename(filename)
+        
+        # Validate that the detected content type is reasonable
+        if content_type == 'application/octet-stream':
+            # Try to detect from file magic numbers if possible
+            detected_type = detect_content_type_from_file(file_path)
+            if detected_type and detected_type != 'application/octet-stream':
+                content_type = detected_type
+        
+        logger.info(f"Creating document for file: {filename} with content-type: {content_type}")
+        
+        # Call the internal function
+        result = create_document_internal(
+            id_cliente=client_id, 
+            filename=filename, 
+            content_type=content_type, 
+            parent_document_id=parent_document_id, 
+            external_file_id=external_file_id, 
+            user_id=user_id
+        )
+        
+        # Check if document creation was successful
+        if not result.get('success', False):
+            logger.error(f"Failed to create document: {result.get('error', 'Unknown error')}")
+            return {
+                'status': 'error',
+                'message': f"Failed to create document: {result.get('error', 'Unknown error')}"
+            }
+        
+        # Extract document info from successful result
+        doc_id = result.get('id_documento')
+        upload_url = result.get('upload_url')
+        upload_fields = result.get('upload_fields')
+
+        if not all([doc_id, upload_url, upload_fields]):
+            logger.error("Invalid response from create_document_internal")
+            return {
+                'status': 'error',
+                'message': "Invalid response from document creation"
+            }
+        
+        logger.info(f"Document created with ID: {doc_id}, uploading with content-type: {content_type}")
+        
+        # Upload the file with explicit content type
+        try:
+            with open(file_path, 'rb') as file_content:
+                # Ensure Content-Type is set correctly in the form data
+                form_data = upload_fields.copy()
+                
+                # Override Content-Type if it was set incorrectly
+                if 'Content-Type' in form_data:
+                    form_data['Content-Type'] = content_type
+                
+                # Log the form data for debugging
+                logger.info(f"Upload form data: {form_data}")
+                
+                # Prepare files with explicit content type
+                files = {'file': (filename, file_content, content_type)}
+                
+                logger.info(f"Uploading file {filename} to S3 with Content-Type: {content_type}")
+                
+                # Upload to S3
+                upload_response = requests.post(
+                    upload_url, 
+                    data=form_data,
+                    files=files,
+                    timeout=360
+                )
+                
+                if upload_response.status_code not in [200, 201, 204]:
+                    logger.error(f"Failed to upload file to S3: {upload_response.status_code} - {upload_response.text}")
+                    return {
+                        'status': 'error',
+                        'id_documento': doc_id,
+                        'message': f"Failed to upload file to S3: {upload_response.status_code}"
+                    }
+                
+                logger.info(f"Successfully uploaded file {filename} to S3")
+                
+        except Exception as upload_err:
+            logger.error(f"Error uploading file to S3: {str(upload_err)}")
+            return {
+                'status': 'error',
+                'id_documento': doc_id,
+                'message': f"Error uploading file to S3: {str(upload_err)}"
+            }
+        
+        return {
+            'status': 'success',
+            'id_documento': doc_id,
+            'filename': filename,
+            'content_type': content_type,
+            'creatio_file_id': external_file_id,
+            'message': f"Document {filename} created and uploaded successfully with content-type {content_type}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in create_document_from_file_improved: {str(e)}")
+        return {
+            'status': 'error',
+            'message': f"Error creating document: {str(e)}"
+        }
+    
+# Mejorar la función get_content_type_from_filename para ser más precisa
+def get_content_type_from_filename(filename):
+    """
+    Determina el tipo de contenido basado en la extensión del archivo.
+    Prioriza mimetypes.guess_type() pero tiene fallbacks confiables.
+    """
+    import mimetypes
+    
+    # Inicializar mimetypes si no está inicializado
+    if not mimetypes.inited:
+        mimetypes.init()
+    
+    # Intentar primero con mimetypes
+    content_type, encoding = mimetypes.guess_type(filename)
+    
+    if content_type and content_type != 'application/octet-stream':
+        return content_type
+    
+    # Fallbacks más específicos para extensiones comunes
+    if '.' not in filename:
+        return 'application/octet-stream'
+    
+    extension = filename.lower().split('.')[-1]
+    
+    # Mapeo específico y confiable
+    content_type_map = {
+        # Imágenes
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'bmp': 'image/bmp',
+        'tiff': 'image/tiff',
+        'tif': 'image/tiff',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml',
+        'ico': 'image/x-icon',
+        
+        # Documentos
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'xls': 'application/vnd.ms-excel',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'ppt': 'application/vnd.ms-powerpoint',
+        'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'odt': 'application/vnd.oasis.opendocument.text',
+        'ods': 'application/vnd.oasis.opendocument.spreadsheet',
+        'odp': 'application/vnd.oasis.opendocument.presentation',
+        
+        # Texto
+        'txt': 'text/plain',
+        'csv': 'text/csv',
+        'json': 'application/json',
+        'xml': 'application/xml',
+        'html': 'text/html',
+        'htm': 'text/html',
+        'css': 'text/css',
+        'js': 'application/javascript',
+        
+        # Archivos comprimidos
+        'zip': 'application/zip',
+        'rar': 'application/vnd.rar',
+        '7z': 'application/x-7z-compressed',
+        'tar': 'application/x-tar',
+        'gz': 'application/gzip',
+        'bz2': 'application/x-bzip2',
+        
+        # Audio
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'ogg': 'audio/ogg',
+        'flac': 'audio/flac',
+        
+        # Video
+        'mp4': 'video/mp4',
+        'avi': 'video/x-msvideo',
+        'mov': 'video/quicktime',
+        'wmv': 'video/x-ms-wmv',
+        'mkv': 'video/x-matroska'
+    }
+    
+    detected_type = content_type_map.get(extension, 'application/octet-stream')
+    
+    # Log para debugging
+    logger.info(f"Content type detection for '{filename}': extension='{extension}' -> '{detected_type}'")
+    
+    return detected_type
+
+def detect_content_type_from_file(file_path):
+    """
+    Detecta el content type leyendo los primeros bytes del archivo (magic numbers)
+    """
+    try:
+        with open(file_path, 'rb') as f:
+            # Leer los primeros 512 bytes
+            header = f.read(512)
+        
+        # Patrones de magic numbers para tipos comunes
+        magic_patterns = {
+            b'\x89PNG\r\n\x1a\n': 'image/png',
+            b'\xff\xd8\xff': 'image/jpeg',
+            b'GIF87a': 'image/gif',
+            b'GIF89a': 'image/gif',
+            b'%PDF': 'application/pdf',
+            b'PK\x03\x04': 'application/zip',  # También para docx, xlsx, etc.
+            b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1': 'application/msword',  # Doc files
+            b'BM': 'image/bmp',
+            b'RIFF': 'image/webp',  # Necesita verificación adicional
+        }
+        
+        # Verificar patrones
+        for pattern, content_type in magic_patterns.items():
+            if header.startswith(pattern):
+                # Verificación especial para RIFF (puede ser WebP o otros)
+                if pattern == b'RIFF' and b'WEBP' in header[:20]:
+                    return 'image/webp'
+                elif pattern == b'RIFF':
+                    continue  # No es WebP, seguir buscando
+                
+                logger.info(f"Detected content type from magic numbers: {content_type}")
+                return content_type
+        
+        return None
+        
+    except Exception as e:
+        logger.warning(f"Could not detect content type from file magic: {str(e)}")
+        return None
