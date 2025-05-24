@@ -1465,6 +1465,8 @@ Resources:
         - x86_64
       Policies:
         - VPCAccessPolicy: {}
+        - S3CrudPolicy:  # Añadir esta política
+           BucketName: gestor-documental-bancario-documents-input
       VpcConfig:
         SecurityGroupIds:
           - !Ref LambdaSecurityGroup
