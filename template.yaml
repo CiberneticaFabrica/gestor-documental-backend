@@ -803,6 +803,18 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /documents/{id}/move
             Method: POST
+        DocumentDataOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/data
+            Method: OPTIONS
+        UpdateDocumentData:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}/data
+            Method: PUT
            
         # Document versions routes
         DocumentVersionsOptions:
@@ -1587,3 +1599,7 @@ Outputs:
   DashboardMetricsFunctionIamRole:
     Description: Implicit IAM Role created for Dashboard Metrics function
     Value: !GetAtt DashboardMetricsFunctionRole.Arn
+
+
+
+   

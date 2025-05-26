@@ -55,6 +55,10 @@ def lambda_handler(event, context):
             doc_id = path.split('/')[2]
             event['pathParameters'] = {'id': doc_id}
             return move_document(event, context)
+        elif http_method == 'PUT' and path.startswith('/documents/') and path.endswith('/data'):
+            doc_id = path.split('/')[2]
+            event['pathParameters'] = {'id': doc_id}
+            return update_document_specific_data(event, context)
         
         # Document versions routes
         elif http_method == 'GET' and path.startswith('/documents/') and path.endswith('/versions'):
@@ -2034,4 +2038,197 @@ def move_document(event, context):
             'statusCode': 500,
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error moving document: {str(e)}'})
+        }
+
+def update_document_specific_data(event, context):
+    """Updates specific document data in identification, contracts, or financial tables"""
+    try:
+        # Validate session
+        user_id, error_response = validate_session(event, 'documentos.editar')
+        if error_response:
+            return error_response
+        
+        # Get document ID
+        doc_id = event['pathParameters']['id']
+        
+        # Get request body
+        body = json.loads(event['body'])
+        
+        # Check if document exists and user has permission
+        check_query = """
+        SELECT d.id_documento, d.titulo, d.estado, d.id_carpeta, d.creado_por
+        FROM documentos d
+        WHERE d.id_documento = %s AND d.estado != 'eliminado'
+        """
+        
+        doc_result = execute_query(check_query, (doc_id,))
+        if not doc_result:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Document not found or already deleted'})
+            }
+        
+        document = doc_result[0]
+        
+        # Check if user has permission to edit the document
+        if document['creado_por'] != user_id:
+            # Check if user has write access to the document's folder
+            access_query = """
+            SELECT COUNT(*) as has_access
+            FROM permisos_carpetas pc
+            WHERE pc.id_carpeta = %s AND tipo_permiso IN ('escritura', 'administracion') AND (
+                (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
+                (pc.id_entidad IN (
+                    SELECT ug.id_grupo
+                    FROM usuarios_grupos ug
+                    WHERE ug.id_usuario = %s
+                ) AND pc.tipo_entidad = 'grupo')
+            )
+            """
+            
+            access_result = execute_query(access_query, (document['id_carpeta'], user_id, user_id))
+            if not access_result or access_result[0]['has_access'] == 0:
+                return {
+                    'statusCode': 403,
+                    'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                    'body': json.dumps({'error': 'You do not have permission to edit this document'})
+                }
+        
+        # Try to find which specific table this document belongs to
+        table_found = None
+        current_data = None
+        
+        # Check documentos_identificacion first
+        id_query = """
+        SELECT * FROM documentos_identificacion WHERE id_documento = %s
+        """
+        id_result = execute_query(id_query, (doc_id,))
+        
+        if id_result:
+            table_found = 'documentos_identificacion'
+            current_data = id_result[0]
+        else:
+            # Check contratos_bancarios
+            cb_query = """
+            SELECT * FROM contratos_bancarios WHERE id_documento = %s
+            """
+            cb_result = execute_query(cb_query, (doc_id,))
+            
+            if cb_result:
+                table_found = 'contratos_bancarios'
+                current_data = cb_result[0]
+            else:
+                # Check documentos_financieros
+                df_query = """
+                SELECT * FROM documentos_financieros WHERE id_documento = %s
+                """
+                df_result = execute_query(df_query, (doc_id,))
+                
+                if df_result:
+                    table_found = 'documentos_financieros'
+                    current_data = df_result[0]
+        
+        if not table_found:
+            return {
+                'statusCode': 404,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'Document specific data not found in any specialized table'})
+            }
+        
+        # Define allowed fields for each table
+        allowed_fields = {
+            'documentos_identificacion': [
+                'tipo_documento', 'numero_documento', 'fecha_emision', 'fecha_expiracion',
+                'genero', 'nombre_completo', 'pais_emision', 'lugar_nacimiento',
+                'autoridad_emision', 'nacionalidad', 'codigo_pais'
+            ],
+            'contratos_bancarios': [
+                'tipo_contrato', 'numero_contrato', 'fecha_inicio', 'fecha_fin',
+                'estado', 'valor_contrato', 'tasa_interes', 'periodo_tasa',
+                'moneda', 'numero_producto', 'firmado_digitalmente',
+                'fecha_ultima_revision', 'revisado_por', 'observaciones'
+            ],
+            'documentos_financieros': [
+                'tipo_documento_financiero', 'periodo_inicio', 'periodo_fin',
+                'institucion_emisora', 'ingresos_reportados', 'activos_reportados',
+                'pasivos_reportados', 'score_crediticio', 'moneda', 'verificado',
+                'verificado_por', 'fecha_verificacion'
+            ]
+        }
+        
+        # Build update query based on table and provided fields
+        update_fields = []
+        update_params = []
+        
+        for field, value in body.items():
+            if field in allowed_fields[table_found]:
+                update_fields.append(f"{field} = %s")
+                update_params.append(value)
+        
+        if not update_fields:
+            return {
+                'statusCode': 400,
+                'headers': add_cors_headers({'Content-Type': 'application/json'}),
+                'body': json.dumps({'error': 'No valid fields to update for this document type'})
+            }
+        
+        # Add document ID to parameters
+        update_params.append(doc_id)
+        
+        # Build and execute update query
+        update_query = f"""
+        UPDATE {table_found}
+        SET {', '.join(update_fields)}
+        WHERE id_documento = %s
+        """
+        
+        execute_query(update_query, update_params, fetch=False)
+        
+        # Update main document table modification timestamp
+        main_update_query = """
+        UPDATE documentos
+        SET fecha_modificacion = %s,
+            modificado_por = %s
+        WHERE id_documento = %s
+        """
+        
+        now = datetime.datetime.now()
+        execute_query(main_update_query, (now, user_id, doc_id), fetch=False)
+        
+        # Log document specific data update
+        audit_data = {
+            'fecha_hora': now,
+            'usuario_id': user_id,
+            'direccion_ip': event.get('requestContext', {}).get('identity', {}).get('sourceIp', '0.0.0.0'),
+            'accion': 'modificar',
+            'entidad_afectada': 'documento_datos_especificos',
+            'id_entidad_afectada': doc_id,
+            'detalles': json.dumps({
+                'tabla_afectada': table_found,
+                'campos_actualizados': list(body.keys()),
+                'titulo_documento': document['titulo']
+            }),
+            'resultado': 'éxito'
+        }
+        
+        insert_audit_record(audit_data)
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({
+                'message': 'Document specific data updated successfully',
+                'id_documento': doc_id,
+                'table_updated': table_found,
+                'fields_updated': list(body.keys())
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating document specific data: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error updating document specific data: {str(e)}'})
         }
