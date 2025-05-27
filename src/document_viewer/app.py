@@ -90,6 +90,7 @@ def lambda_handler(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error interno del servidor: {str(e)}'})
         }
+
 def validate_session(event, required_permission=None):
     """Valida la sesión del usuario y verifica permisos si es necesario"""
     auth_header = event.get('headers', {}).get('Authorization', '')

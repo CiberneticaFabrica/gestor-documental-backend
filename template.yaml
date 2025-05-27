@@ -54,7 +54,14 @@ Parameters:
   PrivateSubnet2:
     Type: AWS::EC2::Subnet::Id
     Description: Second private subnet for Lambda functions
- 
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-haiku-20240307-v1:0
+    Description: Bedrock Model ID for AI responses
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+    Description: AWS Region for Bedrock service   
 Resources:
   # Definición del API Gateway con CORS habilitado
   ApiGateway:
@@ -1538,6 +1545,174 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
   
+  GlobalBankingChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: global_banking_chat.app.lambda_handler
+      Runtime: python3.9
+      Timeout: 300  # 5 minutos para consultas complejas
+      MemorySize: 512  # Más memoria para procesamiento IA
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+      Policies:
+        - VPCAccessPolicy: {}
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:ListFoundationModels
+              Resource: "*"
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # OPTIONS para CORS
+        ChatGlobalOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/global
+            Method: OPTIONS
+        # POST para consultas del chat
+        ChatGlobalPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/global
+            Method: POST
+
+  ChatSuggestionsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: chat_suggestions.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # OPTIONS para CORS
+        ChatSuggestionsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/suggestions
+            Method: OPTIONS
+        # GET para obtener sugerencias
+        ChatSuggestionsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/suggestions
+            Method: GET
+
+  ChatAnalyticsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: chat_analytics.app.lambda_handler
+      Runtime: python3.9
+      Architectures:
+        - x86_64
+      Environment:
+        Variables:
+          ANALYTICS_RETENTION_DAYS: 90
+      Policies:
+        - VPCAccessPolicy: {}
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+      Events:
+        # OPTIONS para CORS
+        ChatAnalyticsOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/analytics
+            Method: OPTIONS
+        # GET para métricas del dashboard
+        ChatAnalyticsGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/analytics
+            Method: GET
+        
+        # Rutas para consultas populares
+        ChatPopularQueriesOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/popular-queries
+            Method: OPTIONS
+        ChatPopularQueriesGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/popular-queries
+            Method: GET
+        
+        # Rutas para feedback
+        ChatFeedbackOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/feedback
+            Method: OPTIONS
+        ChatFeedbackPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat/feedback
+            Method: POST
+
+  # EventBridge Rule para análisis diario automático
+  ChatAnalyticsDailyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Ejecuta análisis diario del chat global"
+      ScheduleExpression: "cron(0 2 * * ? *)"  # Todos los días a las 2 AM UTC
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt ChatAnalyticsFunction.Arn
+          Id: "ChatAnalyticsDailyTarget"
+          Input: !Sub |
+            {
+              "source": "aws.events",
+              "detail-type": "Scheduled Event",
+              "detail": {
+                "action": "daily_analytics"
+              }
+            }
+
+  # Permiso para que EventBridge invoque la función
+  ChatAnalyticsEventPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ChatAnalyticsFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ChatAnalyticsDailyRule.Arn
+
+
 Outputs:
   ApiGatewayUrl:
     Description: URL of the API Gateway
@@ -1599,7 +1774,43 @@ Outputs:
   DashboardMetricsFunctionIamRole:
     Description: Implicit IAM Role created for Dashboard Metrics function
     Value: !GetAtt DashboardMetricsFunctionRole.Arn
+<<<<<<< Updated upstream
 
 
 
    
+=======
+  ChatGlobalApi:
+    Description: API Gateway endpoint URL for Global Banking Chat
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat/global"
+  
+  GlobalBankingChatFunctionArn:
+    Description: Global Banking Chat Lambda Function ARN
+    Value: !GetAtt GlobalBankingChatFunction.Arn
+  
+  GlobalBankingChatFunctionIamRole:
+    Description: Implicit IAM Role created for Global Banking Chat function
+    Value: !GetAtt GlobalBankingChatFunctionRole.Arn
+  
+  ChatSuggestionsApi:
+    Description: API Gateway endpoint URL for Chat Suggestions
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat/suggestions"
+  
+  ChatSuggestionsFunctionArn:
+    Description: Chat Suggestions Lambda Function ARN
+    Value: !GetAtt ChatSuggestionsFunction.Arn
+  
+  ChatSuggestionsFunctionIamRole:
+    Description: Implicit IAM Role created for Chat Suggestions function
+    Value: !GetAtt ChatSuggestionsFunctionRole.Arn
+
+  ChatAnalyticsApi:
+    Description: API Gateway endpoint URL for Chat Analytics
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat/analytics"
+  ChatAnalyticsFunctionArn:
+    Description: Chat Analytics Lambda Function ARN
+    Value: !GetAtt ChatAnalyticsFunction.Arn
+  ChatAnalyticsFunctionIamRole:
+    Description: Implicit IAM Role created for Chat Analytics function
+    Value: !GetAtt ChatAnalyticsFunctionRole.Arn  
+>>>>>>> Stashed changes

@@ -1040,7 +1040,7 @@ def update_document(event, context):
         
         # Validate status change
         if 'estado' in body:
-            valid_statuses = ['borrador', 'publicado', 'archivado']
+            valid_statuses = ['borrador', 'publicado', 'archivado','rechazado']
             if body['estado'] not in valid_statuses:
                 return {
                     'statusCode': 400,
