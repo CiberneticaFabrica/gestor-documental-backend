@@ -52,6 +52,8 @@ def lambda_handler(event, context):
             document_id = path.split('/')[3]
             event['pathParameters'] = {'document_id': document_id}
             return get_document_activity(event, context)
+        elif http_method == 'GET' and path == '/audit-logs/clients-documents-activity':
+            return get_clients_with_documents_activity(event, context)
         
                  
         # Si no se encuentra una ruta, devolver 404
@@ -1202,3 +1204,209 @@ def get_security_events(event, context):
             'headers': add_cors_headers({'Content-Type': 'application/json'}),
             'body': json.dumps({'error': f'Error al obtener eventos de seguridad: {str(e)}'})
         }
+
+def get_clients_with_documents_activity(event, context):
+    """Obtener todos los clientes con sus documentos y actividad limitada"""
+    try:
+        # Validar sesión
+        user_id, error_response = validate_session(event, 'documentos.ver')
+        if error_response:
+            return error_response
+        
+        # Obtener parámetros de consulta
+        query_params = event.get('queryStringParameters', {}) or {}
+        
+        # Paginación para clientes
+        page = int(query_params.get('page', 1))
+        page_size = int(query_params.get('limit', 10))
+        
+        # Filtros opcionales
+        estado_cliente = query_params.get('estado_cliente')  # activo, inactivo, prospecto
+        tipo_cliente = query_params.get('tipo_cliente')      # persona_fisica, empresa, organismo_publico
+        segmento = query_params.get('segmento')             # retail, premium, etc.
+        
+        # Query principal para obtener clientes
+        clients_query = """
+        SELECT c.id_cliente, c.codigo_cliente, c.tipo_cliente, c.nombre_razon_social,
+               c.documento_identificacion, c.estado, c.segmento, c.segmento_bancario,
+               c.nivel_riesgo, c.estado_documental, c.fecha_alta,
+               u.nombre_usuario as gestor_principal
+        FROM clientes c
+        LEFT JOIN usuarios u ON c.gestor_principal_id = u.id_usuario
+        WHERE 1=1
+        """
+        
+        count_query = """
+        SELECT COUNT(*) as total
+        FROM clientes c
+        WHERE 1=1
+        """
+        
+        params = []
+        count_params = []
+        
+        # Aplicar filtros
+        if estado_cliente:
+            clients_query += " AND c.estado = %s"
+            count_query += " AND c.estado = %s"
+            params.append(estado_cliente)
+            count_params.append(estado_cliente)
+        
+        if tipo_cliente:
+            clients_query += " AND c.tipo_cliente = %s"
+            count_query += " AND c.tipo_cliente = %s"
+            params.append(tipo_cliente)
+            count_params.append(tipo_cliente)
+        
+        if segmento:
+            clients_query += " AND c.segmento = %s"
+            count_query += " AND c.segmento = %s"
+            params.append(segmento)
+            count_params.append(segmento)
+        
+        # Ordenamiento y paginación
+        clients_query += " ORDER BY c.fecha_alta DESC LIMIT %s OFFSET %s"
+        params.append(page_size)
+        params.append((page - 1) * page_size)
+        
+        # Ejecutar consultas
+        clients = execute_query(clients_query, params)
+        count_result = execute_query(count_query, count_params)
+        
+        total_clients = count_result[0]['total'] if count_result else 0
+        total_pages = (total_clients + page_size - 1) // page_size if total_clients > 0 else 1
+        
+        # Para cada cliente, obtener sus documentos
+        for client in clients:
+            client_id = client['id_cliente']
+            
+            # Formatear fecha
+            if 'fecha_alta' in client and client['fecha_alta']:
+                client['fecha_alta'] = client['fecha_alta'].isoformat()
+            
+            # Obtener documentos del cliente
+            documents_query = """
+            SELECT d.id_documento, d.codigo_documento, d.titulo, d.descripcion,
+                   d.version_actual, d.fecha_creacion, d.estado,
+                   td.nombre_tipo as tipo_documento,
+                   dc.fecha_asignacion
+            FROM documentos_clientes dc
+            JOIN documentos d ON dc.id_documento = d.id_documento
+            JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+            WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
+            ORDER BY dc.fecha_asignacion DESC
+            """
+            
+            documents = execute_query(documents_query, (client_id,))
+            
+            # Para cada documento, obtener las últimas 5 actividades
+            for document in documents:
+                document_id = document['id_documento']
+                
+                # Formatear fechas del documento
+                if 'fecha_creacion' in document and document['fecha_creacion']:
+                    document['fecha_creacion'] = document['fecha_creacion'].isoformat()
+                if 'fecha_asignacion' in document and document['fecha_asignacion']:
+                    document['fecha_asignacion'] = document['fecha_asignacion'].isoformat()
+                
+                # Obtener últimas 5 actividades del documento
+                activity_query = """
+                SELECT ra.id_registro, ra.fecha_hora, ra.usuario_id, u.nombre_usuario,
+                       ra.direccion_ip, ra.accion, ra.detalles, ra.resultado
+                FROM registros_auditoria ra
+                LEFT JOIN usuarios u ON ra.usuario_id = u.id_usuario
+                WHERE (
+                    (ra.entidad_afectada = 'documento' AND ra.id_entidad_afectada = %s)
+                    OR
+                    (ra.entidad_afectada = 'version_documento' AND ra.id_entidad_afectada IN (
+                        SELECT id_version
+                        FROM versiones_documento
+                        WHERE id_documento = %s
+                    ))
+                )
+                ORDER BY ra.fecha_hora DESC
+                LIMIT 5
+                """
+                
+                activities = execute_query(activity_query, (document_id, document_id))
+                
+                # Procesar actividades
+                for activity in activities:
+                    # Formatear fechas
+                    if 'fecha_hora' in activity and activity['fecha_hora']:
+                        activity['fecha_hora'] = activity['fecha_hora'].isoformat()
+                    
+                    # Deserializar detalles
+                    if 'detalles' in activity and activity['detalles']:
+                        try:
+                            activity['detalles'] = json.loads(activity['detalles'])
+                        except:
+                            pass
+                
+                # Obtener conteo total de actividades para este documento
+                total_activity_query = """
+                SELECT COUNT(*) as total_activities
+                FROM registros_auditoria ra
+                WHERE (
+                    (ra.entidad_afectada = 'documento' AND ra.id_entidad_afectada = %s)
+                    OR
+                    (ra.entidad_afectada = 'version_documento' AND ra.id_entidad_afectada IN (
+                        SELECT id_version
+                        FROM versiones_documento
+                        WHERE id_documento = %s
+                    ))
+                )
+                """
+                
+                total_activity_result = execute_query(total_activity_query, (document_id, document_id))
+                total_activities_count = total_activity_result[0]['total_activities'] if total_activity_result else 0
+                
+                # Agregar actividades al documento
+                document['actividades'] = activities
+                document['total_actividades'] = total_activities_count
+                document['mostrando_actividades'] = len(activities)
+            
+            # Obtener conteo de documentos del cliente
+            doc_count_query = """
+            SELECT COUNT(*) as total_documentos
+            FROM documentos_clientes dc
+            JOIN documentos d ON dc.id_documento = d.id_documento
+            WHERE dc.id_cliente = %s AND d.estado != 'eliminado'
+            """
+            
+            doc_count_result = execute_query(doc_count_query, (client_id,))
+            total_documents_count = doc_count_result[0]['total_documentos'] if doc_count_result else 0
+            
+            # Agregar documentos al cliente
+            client['documentos'] = documents
+            client['total_documentos'] = total_documents_count
+        
+        # Preparar respuesta
+        response = {
+            'clientes': clients,
+            'pagination': {
+                'total': total_clients,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': total_pages
+            },
+            'summary': {
+                'total_clientes': total_clients,
+                'clientes_en_pagina': len(clients),
+                'limite_actividades_por_documento': 5
+            }
+        }
+        
+        return {
+            'statusCode': 200,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps(response, default=str)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error al obtener clientes con documentos y actividad: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': add_cors_headers({'Content-Type': 'application/json'}),
+            'body': json.dumps({'error': f'Error al obtener clientes con documentos y actividad: {str(e)}'})
+        }        

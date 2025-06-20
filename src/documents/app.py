@@ -533,6 +533,7 @@ def get_document(event, context):
                texto_extraido, entidades_detectadas, metadatos_extraccion
         FROM analisis_documento_ia
         WHERE id_documento = %s
+        and texto_extraido is not null and texto_extraido != ''
         ORDER BY fecha_analisis DESC
         LIMIT 1
         """

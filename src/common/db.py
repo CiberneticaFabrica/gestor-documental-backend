@@ -4,6 +4,7 @@ import uuid
 import logging
 import pymysql
 import datetime
+import re
 
 # Configuración del logger
 logger = logging.getLogger()
@@ -394,303 +395,7 @@ def get_general_analytics(params):
     }
 
 # Funciones específicas para el chat global que complementan las existentes
-
-def get_client_documents_by_name(client_name, user_id, limit=20):
-    """
-    Obtiene documentos de un cliente específico por nombre (optimizada para chat global)
-    """
-    # Primero buscar el cliente
-    client_search_query = """
-    SELECT id_cliente, nombre_razon_social, estado_documental
-    FROM clientes
-    WHERE nombre_razon_social LIKE %s
-    ORDER BY 
-        CASE 
-            WHEN nombre_razon_social = %s THEN 1
-            WHEN nombre_razon_social LIKE %s THEN 2
-            ELSE 3
-        END
-    LIMIT 1
-    """
-    
-    search_pattern = f"%{client_name}%"
-    exact_match = client_name
-    starts_with = f"{client_name}%"
-    
-    client_result = execute_query(client_search_query, [search_pattern, exact_match, starts_with], True)
-    
-    if not client_result:
-        return None, "Cliente no encontrado"
-    
-    client = client_result[0]
-    client_id = client['id_cliente']
-    
-    # Obtener documentos del cliente
-    docs_query = """
-    SELECT 
-        d.id_documento,
-        d.codigo_documento,
-        d.titulo,
-        td.nombre_tipo,
-        d.estado,
-        d.fecha_creacion,
-        d.confianza_extraccion,
-        d.validado_manualmente,
-        di.numero_documento,
-        di.fecha_expiracion,
-        CASE 
-            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion < CURDATE() THEN 'VENCIDO'
-            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'POR_VENCER'
-            WHEN d.validado_manualmente = 1 THEN 'VALIDADO'
-            WHEN d.confianza_extraccion >= 0.8 THEN 'CONFIABLE'
-            ELSE 'REQUIERE_REVISION'
-        END as estado_documento
-    FROM documentos d
-    JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
-    JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
-    LEFT JOIN documentos_identificacion di ON d.id_documento = di.id_documento
-    WHERE dc.id_cliente = %s
-    AND d.estado != 'eliminado'
-    AND (d.creado_por = %s OR EXISTS (
-        SELECT 1 FROM permisos_carpetas pc 
-        WHERE pc.id_carpeta = d.id_carpeta 
-        AND (
-            (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
-            (pc.id_entidad IN (SELECT id_grupo FROM usuarios_grupos WHERE id_usuario = %s) AND pc.tipo_entidad = 'grupo')
-        )
-        AND pc.tipo_permiso IN ('lectura', 'escritura', 'administracion')
-    ))
-    ORDER BY d.fecha_creacion DESC
-    LIMIT %s
-    """
-    
-    documents = execute_query(docs_query, [client_id, user_id, user_id, user_id, limit], True)
-    
-    return {
-        'client_info': client,
-        'documents': documents,
-        'total_documents': len(documents)
-    }, None
-
-def get_expiring_documents_for_chat(days=30, user_id=None, limit=50):
-    """
-    Obtiene documentos próximos a expirar (optimizada para chat global)
-    """
-    query = """
-    SELECT 
-        di.id_documento,
-        d.titulo,
-        d.codigo_documento,
-        di.tipo_documento,
-        di.numero_documento,
-        di.fecha_expiracion,
-        di.nombre_completo,
-        c.nombre_razon_social as cliente_nombre,
-        c.id_cliente,
-        DATEDIFF(di.fecha_expiracion, CURDATE()) as dias_restantes,
-        CASE 
-            WHEN DATEDIFF(di.fecha_expiracion, CURDATE()) <= 0 THEN 'VENCIDO'
-            WHEN DATEDIFF(di.fecha_expiracion, CURDATE()) <= 5 THEN 'CRÍTICO'
-            WHEN DATEDIFF(di.fecha_expiracion, CURDATE()) <= 15 THEN 'URGENTE'
-            WHEN DATEDIFF(di.fecha_expiracion, CURDATE()) <= 30 THEN 'PRÓXIMO'
-            ELSE 'NORMAL'
-        END as nivel_urgencia
-    FROM documentos_identificacion di
-    JOIN documentos d ON di.id_documento = d.id_documento
-    LEFT JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
-    LEFT JOIN clientes c ON dc.id_cliente = c.id_cliente
-    WHERE di.fecha_expiracion BETWEEN DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND DATE_ADD(CURDATE(), INTERVAL %s DAY)
-    AND d.estado = 'publicado'
-    AND (%s IS NULL OR d.creado_por = %s OR EXISTS (
-        SELECT 1 FROM permisos_carpetas pc 
-        WHERE pc.id_carpeta = d.id_carpeta 
-        AND (
-            (pc.id_entidad = %s AND pc.tipo_entidad = 'usuario') OR
-            (pc.id_entidad IN (SELECT id_grupo FROM usuarios_grupos WHERE id_usuario = %s) AND pc.tipo_entidad = 'grupo')
-        )
-        AND pc.tipo_permiso IN ('lectura', 'escritura', 'administracion')
-    ))
-    ORDER BY di.fecha_expiracion ASC, nivel_urgencia DESC
-    LIMIT %s
-    """
-    
-    return execute_query(query, [days, user_id, user_id, user_id, user_id, limit], True)
-
-def get_user_document_stats_for_chat(user_id, time_range='week'):
-    """
-    Obtiene estadísticas de documentos del usuario (para chat global)
-    """
-    # Determinar condición de fecha
-    if time_range == 'today':
-        date_condition = "DATE(d.fecha_creacion) = CURDATE()"
-    elif time_range == 'yesterday':
-        date_condition = "DATE(d.fecha_creacion) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)"
-    elif time_range == 'week':
-        date_condition = "d.fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
-    elif time_range == 'month':
-        date_condition = "d.fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)"
-    else:
-        date_condition = "1=1"  # Todos los documentos
-    
-    # Estadísticas generales
-    stats_query = f"""
-    SELECT 
-        COUNT(*) as total_documentos,
-        COUNT(CASE WHEN DATE(d.fecha_creacion) = CURDATE() THEN 1 END) as subidos_hoy,
-        COUNT(CASE WHEN DATE(d.fecha_creacion) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN 1 END) as subidos_ayer,
-        COUNT(CASE WHEN d.fecha_creacion >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN 1 END) as subidos_semana,
-        COUNT(CASE WHEN d.validado_manualmente = 1 THEN 1 END) as validados,
-        COUNT(CASE WHEN d.confianza_extraccion < 0.7 THEN 1 END) as requieren_revision,
-        AVG(d.confianza_extraccion) as confianza_promedio
-    FROM documentos d
-    WHERE d.creado_por = %s
-    AND d.estado != 'eliminado'
-    AND {date_condition}
-    """
-    
-    # Distribución por tipo
-    types_query = f"""
-    SELECT 
-        td.nombre_tipo,
-        COUNT(*) as cantidad
-    FROM documentos d
-    JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
-    WHERE d.creado_por = %s
-    AND d.estado != 'eliminado'
-    AND {date_condition}
-    GROUP BY td.nombre_tipo
-    ORDER BY cantidad DESC
-    """
-    
-    stats = execute_query(stats_query, [user_id], True)
-    types = execute_query(types_query, [user_id], True)
-    
-    return {
-        'general_stats': stats[0] if stats else {},
-        'distribution_by_type': types
-    }
-
-def register_global_chat_query(user_id, question, answer, intent_detected, data_sources, processing_time_ms=None):
-    """
-    Registra una consulta del chat global en la base de datos
-    """
-    query_id = generate_uuid()
-    
-    query = """
-    INSERT INTO consultas_globales_sistema (
-        id_consulta,
-        id_usuario,
-        pregunta,
-        respuesta,
-        intent_detectado,
-        entidades_detectadas,
-        fuentes_datos_utilizadas,
-        fecha_consulta,
-        servicio_ia_utilizado,
-        tiempo_procesamiento_ms
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
-    """
-    
-    # Convertir data_sources a JSON si es una lista
-    if isinstance(data_sources, list):
-        data_sources_json = json.dumps(data_sources)
-    else:
-        data_sources_json = data_sources
-    
-    execute_query(query, [
-        query_id,
-        user_id,
-        question,
-        answer,
-        intent_detected,
-        json.dumps([]),  # entidades_detectadas - se puede expandir después
-        data_sources_json,
-        'bedrock',
-        processing_time_ms
-    ], fetch=False)
-    
-    return query_id
-
-def update_chat_query_feedback(query_id, satisfaction_rating, comment=None):
-    """
-    Actualiza el feedback de una consulta del chat global
-    """
-    if comment:
-        # Si hay comentario, actualizar ambos campos
-        query = """
-        UPDATE consultas_globales_sistema
-        SET satisfaccion_usuario = %s
-        WHERE id_consulta = %s
-        """
-        execute_query(query, [satisfaction_rating, query_id], fetch=False)
-        
-        # Insertar comentario en tabla separada si existe
-        try:
-            comment_query = """
-            INSERT INTO feedback_chat_detallado (
-                id_feedback, id_consulta, comentario, fecha_feedback
-            ) VALUES (UUID(), %s, %s, NOW())
-            """
-            execute_query(comment_query, [query_id, comment], fetch=False)
-        except:
-            # Si la tabla no existe, solo actualizar satisfacción
-            pass
-    else:
-        # Solo actualizar satisfacción
-        query = """
-        UPDATE consultas_globales_sistema
-        SET satisfaccion_usuario = %s
-        WHERE id_consulta = %s
-        """
-        execute_query(query, [satisfaction_rating, query_id], fetch=False)
-
-def get_chat_suggestions_data(user_role='user', context=''):
-    """
-    Obtiene datos para generar sugerencias del chat global
-    """
-    # Obtener patrones más frecuentes
-    patterns_query = """
-    SELECT 
-        patron_pregunta,
-        intent_asociado,
-        frecuencia_uso
-    FROM patrones_consultas_frecuentes
-    WHERE activo = 1
-    ORDER BY frecuencia_uso DESC
-    LIMIT 10
-    """
-    
-    patterns = execute_query(patterns_query, [], True)
-    
-    # Si es admin o supervisor, obtener alertas adicionales
-    alerts = []
-    if user_role in ['admin', 'supervisor']:
-        alerts_query = """
-        SELECT 
-            'documentos_por_vencer' as tipo_alerta,
-            COUNT(*) as cantidad
-        FROM documentos_identificacion di
-        JOIN documentos d ON di.id_documento = d.id_documento
-        WHERE di.fecha_expiracion BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
-        AND d.estado = 'publicado'
-        
-        UNION ALL
-        
-        SELECT 
-            'documentos_baja_confianza' as tipo_alerta,
-            COUNT(*) as cantidad
-        FROM documentos
-        WHERE confianza_extraccion < 0.7
-        AND validado_manualmente = 0
-        AND estado = 'publicado'
-        """
-        
-        alerts = execute_query(alerts_query, [], True)
-    
-    return {
-        'frequent_patterns': patterns,
-        'system_alerts': alerts
-    }
+ 
 
 # Agregar estas funciones al final de tu archivo db_connector.py
 
@@ -887,3 +592,246 @@ def get_user_context(user_id):
     
     return context
 
+def get_quick_stats_for_chat(user_id):
+    """
+    Obtiene estadísticas rápidas para el contexto del chat
+    """
+    try:
+        query = """
+        SELECT 
+            (SELECT COUNT(*) FROM documentos WHERE creado_por = %s AND estado != 'eliminado') as total_docs,
+            (SELECT COUNT(*) FROM documentos WHERE creado_por = %s AND DATE(fecha_creacion) = CURDATE()) as docs_hoy,
+            (SELECT COUNT(*) FROM documentos_identificacion di 
+             JOIN documentos d ON di.id_documento = d.id_documento 
+             WHERE d.creado_por = %s AND di.fecha_expiracion BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)) as docs_por_vencer,
+            (SELECT COUNT(DISTINCT dc.id_cliente) FROM documentos_clientes dc 
+             JOIN documentos d ON dc.id_documento = d.id_documento 
+             WHERE d.creado_por = %s) as clientes_con_docs
+        """
+        
+        result = execute_query(query, [user_id, user_id, user_id, user_id], True)
+        return result[0] if result else {}
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas rápidas: {str(e)}")
+        return {}
+
+def register_global_chat_query(user_id, question, answer, intent_detected, data_sources, processing_time_ms=None):
+    """
+    Versión optimizada para registrar consultas del chat global
+    """
+    query_id = generate_uuid()
+    
+    # Extraer entidades del análisis si están disponibles
+    entities_detected = []
+    if intent_detected == 'client_documents' or intent_detected == 'count_query':
+        # Buscar nombres en la pregunta
+        name_patterns = [
+            r'(?:de|del|tiene|para)\s+([A-ZÁÉÍÓÚ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚ][a-záéíóúñ]+)*)',
+            r'\b([A-ZÁÉÍÓÚ][a-záéíóúñ]+\s+[A-ZÁÉÍÓÚ][a-záéíóúñ]+)\b'
+        ]
+        
+        for pattern in name_patterns:
+            matches = re.findall(pattern, question, re.IGNORECASE)
+            if matches:
+                entities_detected.append({
+                    'type': 'client_name',
+                    'value': matches[0].strip()
+                })
+                break
+    
+    query = """
+    INSERT INTO consultas_globales_sistema (
+        id_consulta,
+        id_usuario,
+        pregunta,
+        respuesta,
+        intent_detectado,
+        entidades_detectadas,
+        fuentes_datos_utilizadas,
+        fecha_consulta,
+        servicio_ia_utilizado,
+        tiempo_procesamiento_ms
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s)
+    """
+    
+    # Convertir data_sources a JSON si es una lista
+    if isinstance(data_sources, list):
+        data_sources_json = json.dumps(data_sources)
+    else:
+        data_sources_json = data_sources or '[]'
+    
+    try:
+        execute_query(query, [
+            query_id,
+            user_id,
+            question,
+            answer,
+            intent_detected,
+            json.dumps(entities_detected),
+            data_sources_json,
+            'bedrock',
+            processing_time_ms
+        ], fetch=False)
+        
+        return query_id
+    except Exception as e:
+        logger.error(f"Error registrando consulta: {str(e)}")
+        return generate_uuid()
+    
+def validate_client_name(client_name):
+    """
+    Valida y normaliza nombres de clientes para búsquedas más efectivas
+    """
+    if not client_name:
+        return None
+    
+    # Limpiar el nombre
+    cleaned_name = re.sub(r'\s+', ' ', client_name.strip())
+    
+    # Verificar que tenga al menos 2 caracteres
+    if len(cleaned_name) < 2:
+        return None
+    
+    # Verificar que contenga solo letras, espacios y algunos caracteres especiales
+    if not re.match(r'^[A-Za-záéíóúñÁÉÍÓÚÑ\s\-\.]+$', cleaned_name):
+        return None
+    
+    return cleaned_name
+
+def optimize_document_query_for_client(client_id, limit=20):
+    """
+    Consulta optimizada para obtener documentos de un cliente específico
+    """
+    query = """
+    SELECT 
+        d.id_documento,
+        d.codigo_documento,
+        d.titulo,
+        td.nombre_tipo,
+        d.estado,
+        d.fecha_creacion,
+        d.fecha_modificacion,
+        di.numero_documento,
+        di.fecha_expiracion,
+        di.tipo_documento as tipo_identificacion,
+        CASE 
+            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion < CURDATE() THEN 'VENCIDO'
+            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 'POR_VENCER'
+            WHEN d.validado_manualmente = 1 THEN 'VALIDADO'
+            WHEN d.confianza_extraccion >= 0.8 THEN 'CONFIABLE'
+            ELSE 'REQUIERE_REVISION'
+        END as estado_documento,
+        DATEDIFF(di.fecha_expiracion, CURDATE()) as dias_para_vencimiento
+    FROM documentos d
+    JOIN tipos_documento td ON d.id_tipo_documento = td.id_tipo_documento
+    JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
+    LEFT JOIN documentos_identificacion di ON d.id_documento = di.id_documento
+    WHERE dc.id_cliente = %s
+    AND d.estado != 'eliminado'
+    ORDER BY 
+        CASE 
+            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion < CURDATE() THEN 1
+            WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 2
+            ELSE 3
+        END,
+        d.fecha_creacion DESC
+    LIMIT %s
+    """
+    
+    return execute_query(query, [client_id, limit], True)
+
+def get_client_summary_data(client_id):
+    """
+    Obtiene un resumen completo de un cliente para el chat
+    """
+    try:
+        # Información básica del cliente
+        client_query = """
+        SELECT 
+            id_cliente,
+            codigo_cliente,
+            nombre_razon_social,
+            tipo_cliente,
+            estado,
+            estado_documental,
+            documentos_pendientes,
+            nivel_riesgo,
+            segmento_bancario
+        FROM clientes
+        WHERE id_cliente = %s
+        """
+        
+        client_info = execute_query(client_query, [client_id], True)
+        if not client_info:
+            return None
+        
+        client_data = client_info[0]
+        
+        # Estadísticas de documentos
+        stats_query = """
+        SELECT 
+            COUNT(d.id_documento) as total_documentos,
+            COUNT(CASE WHEN d.estado = 'publicado' THEN 1 END) as documentos_activos,
+            COUNT(CASE WHEN d.validado_manualmente = 1 THEN 1 END) as documentos_validados,
+            COUNT(CASE WHEN di.fecha_expiracion IS NOT NULL AND di.fecha_expiracion <= DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 END) as documentos_por_vencer,
+            MAX(d.fecha_creacion) as ultimo_documento_subido
+        FROM documentos d
+        JOIN documentos_clientes dc ON d.id_documento = dc.id_documento
+        LEFT JOIN documentos_identificacion di ON d.id_documento = di.id_documento
+        WHERE dc.id_cliente = %s
+        AND d.estado != 'eliminado'
+        """
+        
+        stats_info = execute_query(stats_query, [client_id], True)
+        if stats_info:
+            client_data.update(stats_info[0])
+        
+        return client_data
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen del cliente: {str(e)}")
+        return None
+    
+def log_chat_interaction(user_id, question, intent, success, processing_time_ms, error_details=None):
+    """
+    Registra interacciones del chat para análisis posterior
+    """
+    try:
+        log_entry = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'user_id': user_id,
+            'question': question,
+            'intent_detected': intent,
+            'success': success,
+            'processing_time_ms': processing_time_ms,
+            'error_details': error_details
+        }
+        
+        logger.info(f"Chat Interaction: {json.dumps(log_entry)}")
+        
+    except Exception as e:
+        logger.error(f"Error logging chat interaction: {str(e)}")
+
+def validate_query_response(response_data):
+    """
+    Valida que la respuesta del chat tenga la estructura correcta
+    """
+    required_fields = ['query_id', 'question', 'answer', 'data_sources', 'entities', 'intent']
+    
+    for field in required_fields:
+        if field not in response_data:
+            logger.warning(f"Missing required field in response: {field}")
+            return False
+    
+    # Validar que entities tenga la estructura correcta
+    if not isinstance(response_data['entities'], dict):
+        logger.warning("Entities field is not a dictionary")
+        return False
+    
+    # Validar que data_sources sea una lista
+    if not isinstance(response_data['data_sources'], list):
+        logger.warning("Data sources field is not a list")
+        return False
+    
+    return True   

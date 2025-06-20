@@ -1436,7 +1436,12 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /audit-logs/security
             Method: OPTIONS
-            
+        ClientsDocumentsActivityOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients-documents-activity
+            Method: OPTIONS    
         # Regular routes
         ListAuditLogs:
           Type: Api
@@ -1474,6 +1479,12 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /audit-logs/security
             Method: GET
+        GetClientsDocumentsActivity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /clients-documents-activity
+            Method: GET    
   MigrationFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1774,12 +1785,7 @@ Outputs:
   DashboardMetricsFunctionIamRole:
     Description: Implicit IAM Role created for Dashboard Metrics function
     Value: !GetAtt DashboardMetricsFunctionRole.Arn
-<<<<<<< Updated upstream
-
-
-
-   
-=======
+  
   ChatGlobalApi:
     Description: API Gateway endpoint URL for Global Banking Chat
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat/global"
@@ -1803,14 +1809,15 @@ Outputs:
   ChatSuggestionsFunctionIamRole:
     Description: Implicit IAM Role created for Chat Suggestions function
     Value: !GetAtt ChatSuggestionsFunctionRole.Arn
-
+  
   ChatAnalyticsApi:
     Description: API Gateway endpoint URL for Chat Analytics
     Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/chat/analytics"
+  
   ChatAnalyticsFunctionArn:
     Description: Chat Analytics Lambda Function ARN
     Value: !GetAtt ChatAnalyticsFunction.Arn
+  
   ChatAnalyticsFunctionIamRole:
     Description: Implicit IAM Role created for Chat Analytics function
-    Value: !GetAtt ChatAnalyticsFunctionRole.Arn  
->>>>>>> Stashed changes
+    Value: !GetAtt ChatAnalyticsFunctionRole.Arn
